@@ -49,7 +49,7 @@ A voice-first, project-aware AI assistant running as a floating Windows overlay.
                                  │ - Groq (STT)
                                  │ - Gemini (LLM + embeddings + grounding)
                                  │ - Tavily (web search)
-                                 │ - OpenAI (fallback)
+                                 │ - Groq (fallback LLM)
                                  ▼
                           (cloud services)
 
@@ -262,7 +262,7 @@ research-jarvis/
 | STT | Groq Whisper-large-v3 | cloud only, no fallback in v1 |
 | TTS | Piper | local, `en_US-lessac-medium` default |
 | LLM primary | Gemini (Flash + Pro) | with native function calling |
-| LLM fallback | OpenAI GPT-4o / 4o-mini | |
+| LLM fallback | Groq llama-3.3-70b-versatile (free tier) | openai.py kept but inactive |
 | Web search | Tavily + Gemini grounding | |
 | PDF parsing | pymupdf (fitz) | |
 | Arxiv | `arxiv` package | |
