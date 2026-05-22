@@ -1,11 +1,12 @@
-# Chat router. Day 3 is a stub: it echoes the message back with the request_id.
-# Day 4 wires this to the LLM router (Gemini primary, OpenAI fallback);
-# Day 5 persists the exchange to SQLite. No external call happens here yet.
+# Chat router. Wired to the LLM router (Gemini primary, OpenAI fallback) on Day 4.
+# Day 5 will persist the exchange to SQLite.
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from loguru import logger
 
 from backend.config.logging import request_id_var
+from backend.llm.base import LLMError
+from backend.llm.router import get_router
 from backend.models.chat import ChatRequest, ChatResponse
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -13,12 +14,22 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 @router.post("", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
-    """Stub. Day 4 wires this to the LLM router. Day 5 saves to SQLite.
-    For now: log the message, return a placeholder reply with the request_id."""
-    # request_id_var is set by the HTTP middleware in main.py for this request.
+    """Send a message to the LLM and return the reply.
+    Gemini is tried first; OpenAI is the fallback on transient failures.
+    Day 5 will persist the exchange to SQLite."""
     rid = request_id_var.get()
-    logger.info(f"Chat stub received: {req.message[:60]}...")
+    logger.info(f"chat request: {req.message[:80]!r}")
+
+    try:
+        result = await get_router().generate(req.message)
+    except LLMError as e:
+        # All providers failed. Surface a human-readable message — no stack trace.
+        logger.error(f"chat failed, all providers exhausted: {e}")
+        raise HTTPException(status_code=503, detail="LLM unavailable, please try again.")
+
     return ChatResponse(
-        reply=f"(stub) I received: {req.message}",
+        reply=result.text,
+        provider=result.provider,
+        model=result.model,
         request_id=rid,
     )

@@ -352,7 +352,7 @@ if call_count >= 5:  # what does 5 mean? why 5?
 
 ## Project-specific gotchas
 
-- **Gemini SDK version drift** — pin in `requirements.txt` once working. The Python SDK has changed API shape multiple times. Verify against the installed version before writing new Gemini code.
+- **Gemini SDK: use `google-genai`, NOT `google-generativeai`** — the latter is deprecated as of late 2025. The new SDK uses `from google import genai; client = genai.Client(api_key=...)` and `client.aio.models.generate_content(...)` for async. Currently pinned at `google-genai==2.6.0`. Pin the version in `requirements.txt` immediately after install — this SDK has changed API shape multiple times.
 - **ChromaDB default embeddings** download a sentence-transformers model on first use. Configure Gemini embeddings explicitly to skip this.
 - **SQLite foreign keys** are off by default. Enable with `PRAGMA foreign_keys = ON;` on every connection.
 - **PyWebView transparency on Windows** needs `transparent=True` AND React root with `background: transparent`. Test with a colored shape so you know it's working.

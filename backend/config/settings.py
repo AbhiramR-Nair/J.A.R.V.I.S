@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_file: str = "data/logs/jarvis.log"
 
+    # LLM model selection
+    # gemini_model_heavy is reserved for quality-critical calls: Day 6 importance
+    # scoring and Days 22-24 paper summarization. Chat uses the flash model.
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_model_heavy: str = "gemini-2.5-pro"
+    openai_model: str = "gpt-4o-mini"  # fallback only; cheap + capable enough
+
     # Misc
     app_version: str = "0.1.0"
     request_id_header: str = "X-Request-ID"
