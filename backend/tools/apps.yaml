@@ -1,0 +1,10 @@
+# Whitelist of launchable applications for the app_launcher tool.
+# Only apps listed here can be opened via subprocess.Popen (Version_1_plan.md rule #3).
+# Use absolute paths on Windows. For Microsoft Store apps use the shell:AppsFolder syntax.
+#
+# Example:
+# apps:
+#   vscode: "C:\\Users\\USER\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe"
+#   notepad: "C:\\Windows\\System32\\notepad.exe"
+
+apps: {}
