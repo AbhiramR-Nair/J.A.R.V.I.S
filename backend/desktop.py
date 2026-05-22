@@ -31,7 +31,7 @@ def main() -> None:
         frameless=True,
         on_top=True,
         transparent=True,
-        background_color="#00000000",
+        background_color="#000000",
         easy_drag=True,
         shadow=False,
     )
