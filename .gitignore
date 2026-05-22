@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+
+# Runtime data (regenerated locally)
+data/jarvis.db
+data/chroma/
+data/recordings/
+data/logs/
+
+# Downloaded binaries / models
+piper/piper.exe
+piper_voices/*.onnx
+piper_voices/*.onnx.json
+wake_word_models/*.tflite
+wake_word_models/*.onnx
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+*.log

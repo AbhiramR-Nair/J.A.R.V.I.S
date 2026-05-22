@@ -1,0 +1,15 @@
+[project]
+name = "research-jarvis"
+version = "0.1.0"
+description = "Voice-first, project-aware AI research and productivity assistant for Windows."
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]  # pycodestyle, pyflakes, isort
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
