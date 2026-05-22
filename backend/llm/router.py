@@ -1,4 +1,4 @@
-"""LLM router — tries primary (Gemini), falls back to OpenAI on transient failures.
+"""LLM router — tries primary (Gemini), falls back to Groq on transient failures.
 
 The router doesn't know which SDK either provider uses. It only sees LLMResponse
 and the three shared exception types. That's the payoff from base.py's abstraction.
@@ -8,7 +8,7 @@ Fallback logic:
   - AuthError from primary → log ERROR (config problem), still try fallback
   - Any error from fallback too → raise LLMError("all providers failed")
   - AuthError from primary does NOT skip fallback — the user may have only one
-    key working (e.g. Gemini key bad, OpenAI key good).
+    key working (e.g. Gemini key bad, Groq key good).
 """
 
 from loguru import logger
@@ -22,7 +22,7 @@ from backend.llm.base import (
     BaseProvider,
 )
 from backend.llm.gemini import GeminiProvider
-from backend.llm.openai import OpenAIProvider
+from backend.llm.groq_llm import GroqLLMProvider
 from backend.services.cost_tracker import cost_tracker
 
 
@@ -86,5 +86,5 @@ _router: LLMRouter | None = None
 def get_router() -> LLMRouter:
     global _router
     if _router is None:
-        _router = LLMRouter(primary=GeminiProvider(), fallback=OpenAIProvider())
+        _router = LLMRouter(primary=GeminiProvider(), fallback=GroqLLMProvider())
     return _router

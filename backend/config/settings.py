@@ -37,7 +37,8 @@ class Settings(BaseSettings):
     # scoring and Days 22-24 paper summarization. Chat uses the flash model.
     gemini_model: str = "gemini-2.5-flash"
     gemini_model_heavy: str = "gemini-2.5-pro"
-    openai_model: str = "gpt-4o-mini"  # fallback only; cheap + capable enough
+    openai_model: str = "gpt-4o-mini"  # kept for reference; not used as fallback
+    groq_model: str = "llama-3.3-70b-versatile"  # fallback LLM; free tier
 
     # Misc
     app_version: str = "0.1.0"
