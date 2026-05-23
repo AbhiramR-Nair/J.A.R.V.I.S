@@ -5,10 +5,12 @@
 
 import uuid
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from loguru import logger
 
-from backend.models.voice import VoiceStateResponse
+from backend.models.voice import SpeakRequest, SpeakResponse, VoiceStateResponse
+from backend.voice.tts import TTSError
 
 router = APIRouter(tags=["voice"])
 
@@ -41,6 +43,28 @@ class ConnectionManager:
 
 # Module-level singleton imported by main.py to wire up the queue drainer.
 manager = ConnectionManager()
+
+
+@router.post("/speak", response_model=SpeakResponse)
+async def speak(payload: SpeakRequest, request: Request) -> SpeakResponse:
+    """Debug endpoint: synthesise and play text via TTS, blocking until playback ends.
+
+    Synchronous (awaits full playback) so curl can confirm audio played before returning.
+    Use this to isolate TTS issues from LLM/chat issues — if this works, the service is fine.
+    Not used by the real voice loop; that goes through /chat (fire-and-forget) or Day 11's
+    conversation state machine.
+    """
+    tts = request.app.state.tts_service
+    try:
+        result = await tts.speak(payload.text)
+    except TTSError as exc:
+        # TTSError messages are pre-sanitised in tts.py — safe to return verbatim.
+        return JSONResponse(status_code=503, content={"error": str(exc)})
+    except Exception as exc:
+        logger.exception("unexpected error in POST /speak: {}", exc)
+        return JSONResponse(status_code=500, content={"error": "Internal TTS error."})
+
+    return SpeakResponse(latency_ms=result.latency_ms, num_samples=result.num_samples)
 
 
 @router.get("/voice-state", response_model=VoiceStateResponse)

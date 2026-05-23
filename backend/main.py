@@ -25,6 +25,7 @@ from backend.database.db import get_db
 from backend.desktop import hotkeys
 from backend.voice.audio import AudioRecorder
 from backend.voice.stt import STTError, STTService
+from backend.voice.tts import TTSService
 
 # Logging is set up once here (console + rotating file + request-ID patcher).
 # Replaces the Day-2 inline loguru setup so the request_id_var actually threads through.
@@ -179,13 +180,17 @@ async def lifespan(app: FastAPI):
         timeout_seconds=s.stt_timeout_seconds,
     )
 
-    # ready flag: gate on BOTH recorder and stt_service being fully constructed.
+    # Build TTSService after STTService so shutdown closes in reverse order: tts → stt → recorder.
+    app.state.tts_service = TTSService(s)
+
+    # ready flag: gate on all three subsystems being fully constructed.
     # An early PTT press before this line cannot trigger a half-built service.
     app.state.ready = True
 
     yield  # server runs here
 
-    # Shutdown LIFO: STT first (no open streams), then recorder (releases mic).
+    # Shutdown LIFO: tts → stt → recorder (reverse of construction order).
+    await app.state.tts_service.close()
     await app.state.stt_service.close()
     if app.state.audio_recorder.is_recording:
         app.state.audio_recorder.stop_recording()

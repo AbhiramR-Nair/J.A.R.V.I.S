@@ -73,6 +73,19 @@ class Settings(BaseSettings):
     stt_temperature: float = 0.0
     stt_timeout_seconds: float = 10.0
 
+    # TTS — Piper (Day 10)
+    # piper_binary_path: extracted zip lands at piper/piper/piper.exe on this machine.
+    # tts_sample_rate: read from en_US-lessac-medium.onnx.json; must match the voice
+    #   file — a mismatch produces chipmunk/slow-mo audio with no other error.
+    # tts_output_device=None means sounddevice uses the system default output device.
+    # tts_timeout_seconds: hard ceiling on Piper subprocess; long replies on a slow CPU
+    #   can take several seconds to synth — 30s is a generous but sane upper bound.
+    piper_binary_path: Path = Path("piper/piper/piper.exe")
+    piper_voice_path: Path = Path("piper_voices/en_US-lessac-medium.onnx")
+    tts_sample_rate: int = 22050
+    tts_output_device: int | None = None
+    tts_timeout_seconds: int = 30
+
     # Misc
     app_version: str = "0.1.0"
     request_id_header: str = "X-Request-ID"

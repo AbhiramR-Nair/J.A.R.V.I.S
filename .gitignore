@@ -16,11 +16,9 @@ data/recordings/
 data/logs/
 
 # Downloaded binaries / models
-piper/piper.exe
-piper_voices/*.onnx
-piper_voices/*.onnx.json
-wake_word_models/*.tflite
-wake_word_models/*.onnx
+piper/
+piper_voices/
+wake_word_models/
 
 # Frontend
 frontend/node_modules/
