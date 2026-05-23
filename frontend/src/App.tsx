@@ -11,14 +11,23 @@ function App() {
   // Holds the /health result + the X-Request-ID we read off the response header.
   const [ping, setPing] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
+  // Briefly shows the saved filename after a recording completes; clears after 2s.
+  const [lastRecording, setLastRecording] = useState<string | null>(null);
 
   // useVoiceEvents opens the WebSocket, logs every frame, and returns the last event.
   const lastEvent = useVoiceEvents();
 
-  // mute_toggle flips the muted state; all other event types just update the badge label.
+  // mute_toggle flips the muted state; recording_saved flashes the filename for 2s.
   useEffect(() => {
     if (lastEvent?.type === "mute_toggle") {
       setMuted((m) => !m);
+    } else if (lastEvent?.type === "recording_saved") {
+      // Extract just the filename from the full path for a compact badge display.
+      const filename = lastEvent.path.split(/[\\/]/).pop() ?? lastEvent.path;
+      console.log("recording saved:", lastEvent.path);
+      setLastRecording(filename);
+      const timer = setTimeout(() => setLastRecording(null), 2000);
+      return () => clearTimeout(timer);
     }
   }, [lastEvent]);
 
@@ -36,10 +45,13 @@ function App() {
   }
 
   // Derive a human-readable status label from mute + last event state.
+  // recording_saved briefly overrides to show the filename, then reverts to idle.
   const statusLabel = muted
     ? "muted"
     : lastEvent?.type === "ptt_start"
     ? "listening"
+    : lastRecording
+    ? `saved: ${lastRecording}`
     : "idle";
 
   // Tells the backend to exit, which kills the whole process cleanly.

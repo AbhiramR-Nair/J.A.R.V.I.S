@@ -14,3 +14,14 @@ VoiceStateLiteral = Literal[
 class VoiceStateResponse(BaseModel):
     state: VoiceStateLiteral
     message: str | None = None  # human-readable note, mainly for "error"
+
+
+# Day 8: audio device models
+class DeviceInfo(BaseModel):
+    index: int
+    name: str
+    channels: int
+
+
+class SetDevicePayload(BaseModel):
+    index: int

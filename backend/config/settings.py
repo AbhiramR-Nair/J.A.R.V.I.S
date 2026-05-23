@@ -1,6 +1,7 @@
 """Application settings, loaded from .env via Pydantic Settings."""
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -50,6 +51,17 @@ class Settings(BaseSettings):
 
     # Memory importance threshold: exchanges scoring below this are not stored
     importance_threshold: float = 4.0
+
+    # Audio capture (Day 8)
+    # These values are locked to what Groq Whisper and openWakeWord both require.
+    # Do not change sample_rate or dtype without checking downstream consumers.
+    audio_sample_rate: int = 16000
+    audio_channels: int = 1
+    audio_dtype: str = "int16"
+    audio_chunk_ms: int = 50            # sounddevice callback granularity in ms
+    recording_max_seconds: int = 30     # PTT hard cap; auto-stops to protect memory
+    recordings_dir: Path = Path("data/recordings")
+    runtime_settings_path: Path = Path("data/settings.json")
 
     # Misc
     app_version: str = "0.1.0"

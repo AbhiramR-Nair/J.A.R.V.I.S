@@ -10,7 +10,8 @@ export type VoiceEvent =
   | { type: "connected"; request_id: string }
   | { type: "ptt_start" }
   | { type: "ptt_end" }
-  | { type: "mute_toggle" };
+  | { type: "mute_toggle" }
+  | { type: "recording_saved"; path: string };
 
 export function useVoiceEvents(): VoiceEvent | null {
   const [last, setLast] = useState<VoiceEvent | null>(null);

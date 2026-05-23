@@ -9,28 +9,97 @@ import asyncio
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from backend.api import chat, health, memory, voice
+from backend.api import audio, chat, health, memory, voice
 from backend.api.voice import manager as ws_manager
 from backend.config.logging import configure_logging, request_id_var
+from backend.config.runtime_settings import get_input_device
 from backend.config.settings import get_settings
 from backend.database.db import get_db
 from backend.desktop import hotkeys
+from backend.voice.audio import AudioRecorder
 
 # Logging is set up once here (console + rotating file + request-ID patcher).
 # Replaces the Day-2 inline loguru setup so the request_id_var actually threads through.
 configure_logging()
 
 
-async def _drain_events(queue: "asyncio.Queue[dict]") -> None:
-    """Long-running task: reads hotkey events from the queue and broadcasts them
-    to all connected WebSocket clients. Runs for the lifetime of the server."""
+async def _save_recording(wav_bytes: bytes) -> Path:
+    """Write WAV bytes to data/recordings/{iso8601}.wav and return the path."""
+    recordings_dir = get_settings().recordings_dir
+    recordings_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+    path = recordings_dir / f"{timestamp}.wav"
+    path.write_bytes(wav_bytes)
+    logger.info(f"recording saved: {path}")
+    return path
+
+
+async def _handle_event_side_effects(
+    app: "FastAPI", event: dict, queue: "asyncio.Queue[dict]"
+) -> None:
+    """
+    Branch on event type and drive audio start/stop as side-effects.
+
+    Runs inside _dispatch_events before the WebSocket broadcast so the UI
+    always gets the event even if audio fails.
+
+    sounddevice start/stop are sync and potentially blocking, so they run in
+    a threadpool executor rather than directly on the asyncio event loop.
+    """
+    # Drop events that arrive before lifespan finishes wiring everything up.
+    if not getattr(app.state, "ready", False):
+        return
+
+    recorder = app.state.audio_recorder
+    loop = asyncio.get_running_loop()
+    etype = event.get("type")
+
+    if etype == "ptt_start":
+        # run_in_executor hands the blocking call to a threadpool thread so the
+        # event loop stays free to handle WebSocket messages during recording.
+        await loop.run_in_executor(None, recorder.start_recording)
+
+    elif etype == "ptt_end":
+        wav_bytes = await loop.run_in_executor(None, recorder.stop_recording)
+        if wav_bytes:
+            path = await _save_recording(wav_bytes)
+            # Inject recording_saved into the queue so it gets broadcast to the UI
+            # and any future consumer (Day 9 STT) can pick it up.
+            await queue.put({"type": "recording_saved", "path": str(path)})
+
+    elif etype == "mute_toggle":
+        # Muting mid-recording aborts cleanly — discard the partial audio.
+        if recorder.is_recording:
+            await loop.run_in_executor(None, recorder.stop_recording)
+            logger.info("audio recorder: aborted by mute toggle")
+
+
+async def _dispatch_events(
+    app: "FastAPI", queue: "asyncio.Queue[dict]"
+) -> None:
+    """
+    Single consumer of the hotkey event queue. Runs for the server lifetime.
+
+    For each event:
+      1. Side-effects (audio start/stop; Day 11 will add conversation state)
+      2. Broadcast to all WebSocket clients
+
+    Side-effect failures are caught and logged so a broken audio path never
+    silences the UI — the badge still updates even if the mic dies.
+    """
     while True:
         event = await queue.get()
+        try:
+            await _handle_event_side_effects(app, event, queue)
+        except Exception as exc:
+            logger.exception(f"dispatcher side-effect error: {exc}")
         await ws_manager.broadcast(event)
 
 
@@ -52,10 +121,30 @@ async def lifespan(app: FastAPI):
     # Store the drainer task on app.state to prevent garbage collection.
     # asyncio.create_task() returns a Task object; if nothing holds a reference
     # to it, the GC can silently cancel it — the task disappears after a few events.
-    app.state.drainer_task = asyncio.create_task(_drain_events(event_queue))
+    app.state.drainer_task = asyncio.create_task(_dispatch_events(app, event_queue))
     app.state.hotkey_queue = event_queue
 
+    # Build the AudioRecorder with the user's saved device, or None for system default.
+    # Device choice is persisted in data/settings.json via runtime_settings.
+    device = get_input_device()
+    app.state.audio_recorder = AudioRecorder(
+        sample_rate=get_settings().audio_sample_rate,
+        channels=get_settings().audio_channels,
+        dtype=get_settings().audio_dtype,
+        device_index=device["index"] if device else None,
+        max_seconds=get_settings().recording_max_seconds,
+    )
+
+    # ready flag: dispatcher checks this before acting on hotkey events.
+    # Prevents audio start/stop from firing before the event loop is fully alive.
+    app.state.ready = True
+
     yield  # server runs here
+
+    # Shutdown: abort any in-flight recording so the mic is released cleanly.
+    if app.state.audio_recorder.is_recording:
+        app.state.audio_recorder.stop_recording()
+        logger.info("audio recorder: stopped on shutdown")
 
 
 app = FastAPI(title="research-jarvis", version="0.1.0", lifespan=lifespan)
@@ -106,3 +195,4 @@ app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(memory.router)
 app.include_router(voice.router)
+app.include_router(audio.router)
