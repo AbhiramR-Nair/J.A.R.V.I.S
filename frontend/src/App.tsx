@@ -1,27 +1,26 @@
 // Day 2 placeholder — transparent window loads this via PyWebView.
 // Day 3 adds a temporary "Ping backend" button and a WebSocket smoke test.
+// Day 7 adds drag bar, close button, visible test shape, and voice event status badge.
 // Real UI (blob, chat panel, settings) is built in Weeks 2-3.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { API_BASE } from "./api/config";
-import { connectVoiceWS } from "./websocket/client";
+import { useVoiceEvents } from "./hooks/useWebSocket";
 
 function App() {
   // Holds the /health result + the X-Request-ID we read off the response header.
   const [ping, setPing] = useState<string | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const [muted, setMuted] = useState(false);
 
-  // Open the voice WebSocket once on mount, log inbound frames, close on unmount.
-  // Note: React 18 StrictMode double-invokes effects in dev, so you'll see the
-  // socket connect → disconnect → reconnect (two "connected" logs). That's expected
-  // dev behaviour — the cleanup below handles teardown correctly.
+  // useVoiceEvents opens the WebSocket, logs every frame, and returns the last event.
+  const lastEvent = useVoiceEvents();
+
+  // mute_toggle flips the muted state; all other event types just update the badge label.
   useEffect(() => {
-    const ws = connectVoiceWS();
-    wsRef.current = ws;
-    ws.onmessage = (ev) => console.log("WS frame:", ev.data);
-    ws.onopen = () => console.log("WS open");
-    return () => ws.close();
-  }, []);
+    if (lastEvent?.type === "mute_toggle") {
+      setMuted((m) => !m);
+    }
+  }, [lastEvent]);
 
   // Call /health, then render both the JSON body and the X-Request-ID header.
   // Reading the header proves the backend's CORS expose_headers is set right.
@@ -36,22 +35,65 @@ function App() {
     }
   }
 
+  // Derive a human-readable status label from mute + last event state.
+  const statusLabel = muted
+    ? "muted"
+    : lastEvent?.type === "ptt_start"
+    ? "listening"
+    : "idle";
+
+  // Tells the backend to exit, which kills the whole process cleanly.
+  async function closeApp() {
+    await fetch(`${API_BASE}/shutdown`, { method: "POST" }).catch(() => {});
+  }
+
   return (
-    <div className="flex flex-col items-center justify-center h-screen gap-4">
-      <div className="bg-black/30 backdrop-blur-sm rounded-2xl px-6 py-4 text-cyan-400 font-mono text-sm">
-        J.A.R.V.I.S — online
-      </div>
-      <button
-        onClick={pingBackend}
-        className="bg-cyan-600/40 hover:bg-cyan-600/60 text-cyan-100 font-mono text-xs px-4 py-2 rounded-lg"
+    <div className="flex flex-col h-screen">
+      {/*
+        Drag bar: -webkit-app-region is a Chromium-specific CSS property that
+        Edge WebView2 (PyWebView's engine on Windows) honours. The 'drag' value
+        makes the entire bar act as a native window drag handle. The close button
+        overrides this with 'no-drag' so its click isn't swallowed by the drag handler.
+      */}
+      <div
+        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+        className="h-8 w-full flex items-center justify-end px-2 bg-black/20 shrink-0"
       >
-        Ping backend
-      </button>
-      {ping && (
-        <div className="bg-black/30 backdrop-blur-sm rounded-lg px-4 py-2 text-cyan-300 font-mono text-xs max-w-md break-all">
-          {ping}
+        <button
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+          onClick={closeApp}
+          className="text-white/50 hover:text-white/90 font-mono text-xs w-6 h-6 flex items-center justify-center rounded hover:bg-white/10"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Main content area */}
+      <div className="flex flex-col items-center justify-center flex-1 gap-4">
+        {/* Temporary test shape — visible proof the transparent window is working.
+            Delete this on Day 15 when the real blob component lands. */}
+        <div className="w-24 h-24 rounded-full bg-cyan-400/50" />
+
+        {/* Status badge — shows current voice state driven by hotkey events */}
+        <div className="bg-black/30 backdrop-blur-sm rounded-lg px-4 py-2 text-cyan-300 font-mono text-sm">
+          Status: {statusLabel}
         </div>
-      )}
+
+        <div className="bg-black/30 backdrop-blur-sm rounded-2xl px-6 py-4 text-cyan-400 font-mono text-sm">
+          J.A.R.V.I.S — online
+        </div>
+        <button
+          onClick={pingBackend}
+          className="bg-cyan-600/40 hover:bg-cyan-600/60 text-cyan-100 font-mono text-xs px-4 py-2 rounded-lg"
+        >
+          Ping backend
+        </button>
+        {ping && (
+          <div className="bg-black/30 backdrop-blur-sm rounded-lg px-4 py-2 text-cyan-300 font-mono text-xs max-w-md break-all">
+            {ping}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
