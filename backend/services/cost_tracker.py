@@ -1,13 +1,16 @@
-"""Cost tracker — log-only stub for Day 4.
+"""Cost tracker — logs every LLM call and persists it to cost_log.
 
-Today: every LLM call writes one structured log line with token counts and
-estimated USD cost. No DB write yet.
-Day 5: this same record() method will also INSERT INTO cost_log once the
-SQLite schema is in place. The router's call site does not change.
+Every call to record() writes a structured log line (for the log file)
+and inserts a row into cost_log (for the DB). The router's call site is
+unchanged from Day 4 — only this implementation changed.
 """
+
+from datetime import datetime, timezone
 
 from loguru import logger
 
+from backend.config.logging import request_id_var
+from backend.database.db import get_db
 from backend.llm.base import LLMResponse
 
 # Pricing per million tokens (USD).
@@ -50,8 +53,31 @@ class CostTracker:
                 "estimated_usd": round(cost, 6),
             },
         )
-        # TODO(Day 5): INSERT INTO cost_log (provider, model, prompt_tokens,
-        #              completion_tokens, estimated_usd, request_id, created_at)
+
+        # Persist to cost_log. Wrapped in try/except so a DB hiccup never
+        # breaks the chat response — cost tracking is best-effort.
+        try:
+            conn = get_db()
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO cost_log
+                        (provider, model, prompt_tokens, completion_tokens,
+                         estimated_usd, request_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        response.provider or "",
+                        response.model or "",
+                        response.prompt_tokens or 0,
+                        response.completion_tokens or 0,
+                        round(cost, 6),
+                        request_id_var.get(),
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+        except Exception as exc:
+            logger.error(f"cost_tracker: failed to write cost_log row: {exc}")
 
 
 # Module-level singleton used by the router.

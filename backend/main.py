@@ -14,12 +14,19 @@ from loguru import logger
 from backend.api import chat, health, memory, voice
 from backend.config.logging import configure_logging, request_id_var
 from backend.config.settings import get_settings
+from backend.database.db import get_db
 
 # Logging is set up once here (console + rotating file + request-ID patcher).
 # Replaces the Day-2 inline loguru setup so the request_id_var actually threads through.
 configure_logging()
 
 app = FastAPI(title="research-jarvis", version="0.1.0")
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    # Initialize DB on boot so the schema and seed run before any request arrives.
+    get_db()
 
 # CORS, tightened from the Day-2 wildcard to an explicit allow-list.
 # expose_headers is the key bit: without it the browser hides X-Request-ID from

@@ -13,5 +13,6 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     request_id: str
-    provider: str | None = None  # which LLM answered ('gemini' or 'openai')
-    model: str | None = None     # exact model id used (e.g. 'gemini-2.5-flash')
+    provider: str | None = None   # which LLM answered ('gemini' or 'groq')
+    model: str | None = None      # exact model id used (e.g. 'gemini-2.5-flash')
+    project_name: str | None = None  # active project at the time of this reply

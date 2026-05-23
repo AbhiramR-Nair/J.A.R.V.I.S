@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"  # kept for reference; not used as fallback
     groq_model: str = "llama-3.3-70b-versatile"  # fallback LLM; free tier
 
+    # Database
+    db_path: str = "data/jarvis.db"
+
     # Misc
     app_version: str = "0.1.0"
     request_id_header: str = "X-Request-ID"
