@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     # Database
     db_path: str = "data/jarvis.db"
 
+    # ChromaDB
+    chroma_persist_dir: str = "data/chroma"
+    # Embeddings (text-embedding-004 was retired; gemini-embedding-001 is the replacement)
+    gemini_embedding_model: str = "gemini-embedding-001"
+
+    # Memory importance threshold: exchanges scoring below this are not stored
+    importance_threshold: float = 4.0
+
     # Misc
     app_version: str = "0.1.0"
     request_id_header: str = "X-Request-ID"

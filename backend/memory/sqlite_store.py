@@ -154,6 +154,34 @@ def save_message(
     return cursor.lastrowid
 
 
+# ---------------------------------------------------------------------------
+# Memory
+# ---------------------------------------------------------------------------
+
+def save_memory(
+    text: str,
+    project_id: int,
+    importance: int,
+    chroma_id: str | None = None,
+) -> int:
+    """Persist a memory entry to SQLite. Returns the new row's rowid.
+
+    chroma_id is None when ChromaDB storage failed — the row is still saved so
+    the text is never silently lost. A NULL chroma_id means this memory is
+    searchable only via SQLite, not via vector search, until a retry populates it.
+    """
+    conn = get_db()
+    with conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO memory (project_id, content, importance, chroma_id, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (project_id, text, importance, chroma_id, datetime.now(timezone.utc).isoformat()),
+        )
+    return cursor.lastrowid
+
+
 def get_conversation_messages(conversation_id: int) -> list[dict]:
     """Return all messages for a conversation, oldest first."""
     conn = get_db()
