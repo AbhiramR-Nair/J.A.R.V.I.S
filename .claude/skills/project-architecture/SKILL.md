@@ -49,7 +49,7 @@ A voice-first, project-aware AI assistant running as a floating Windows overlay.
                                  │ - Groq (STT)
                                  │ - Gemini (LLM + embeddings + grounding)
                                  │ - Tavily (web search)
-                                 │ - Groq (fallback LLM)
+                                 │ - OpenAI (fallback)
                                  ▼
                           (cloud services)
 
@@ -262,7 +262,7 @@ research-jarvis/
 | STT | Groq Whisper-large-v3 | cloud only, no fallback in v1 |
 | TTS | Piper | local, `en_US-lessac-medium` default |
 | LLM primary | Gemini (Flash + Pro) | with native function calling |
-| LLM fallback | Groq llama-3.3-70b-versatile (free tier) | openai.py kept but inactive |
+| LLM fallback | OpenAI GPT-4o / 4o-mini | |
 | Web search | Tavily + Gemini grounding | |
 | PDF parsing | pymupdf (fitz) | |
 | Arxiv | `arxiv` package | |
@@ -339,6 +339,56 @@ if call_count >= 5:  # what does 5 mean? why 5?
     break
 ```
 
+### Cross-thread → event loop bridge
+
+pynput's `Listener` runs on a native OS thread. uvicorn runs an asyncio loop on a different thread. Day 8's `sounddevice` audio capture, Day 11's state machine, and Day 16's amplitude streaming all need to push events from a thread into the loop. `loop.call_soon_threadsafe` is the only thread-safe way to schedule work onto an asyncio loop from outside it. One `asyncio.Queue` + one drainer task fans events out to WebSockets; new event sources push different shapes into the same queue.
+
+```python
+# RIGHT — backend/desktop/hotkeys.py
+# pynput callback runs in the listener thread; bridge into the loop.
+def _emit(event_type: str, data: dict) -> None:
+    _bound_loop.call_soon_threadsafe(
+        _bound_queue.put_nowait,
+        {"type": event_type, **data},
+    )
+
+# RIGHT — backend/main.py lifespan
+async def _drain_events(queue: asyncio.Queue) -> None:
+    while True:
+        event = await queue.get()
+        await ws_manager.broadcast(event)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    queue = asyncio.Queue(maxsize=100)
+    # Hold a strong reference to the Task. asyncio.create_task() returns
+    # a Task that the GC will silently cancel if nothing references it.
+    # Symptom of getting this wrong: events show up in the log but never
+    # reach the WebSocket.
+    app.state.drainer_task = asyncio.create_task(_drain_events(queue))
+    yield
+```
+
+### Bind request_id in background workers
+
+The Day 3 request-id middleware sets a `ContextVar` for the lifetime of an HTTP request, and the loguru patcher uses `setdefault` so an explicit `logger.bind(request_id=...)` always wins. ContextVars propagate across `await` within the same task but NOT across threads, and NOT to FastAPI `BackgroundTasks` (which run after the middleware has reset the var). The hotkey listener, voice loop, and wake word listener all run outside the HTTP request — their logs show `request_id=-` unless they bind their own.
+
+```python
+# RIGHT — any background coroutine or thread entry point
+import uuid
+from loguru import logger
+
+async def voice_loop():
+    rid = uuid.uuid4().hex[:8]
+    bound = logger.bind(request_id=rid)
+    bound.info("voice loop starting")
+    # ... use `bound` for the rest of the work unit
+
+# WRONG — relies on a ContextVar set in some other task
+async def voice_loop():
+    logger.info("voice loop starting")  # request_id = "-"
+```
+
 ## Anti-patterns to avoid
 
 - **Don't add new top-level folders** without asking
@@ -352,9 +402,9 @@ if call_count >= 5:  # what does 5 mean? why 5?
 
 ## Project-specific gotchas
 
-- **Gemini SDK: use `google-genai`, NOT `google-generativeai`** — the latter is deprecated as of late 2025. The new SDK uses `from google import genai; client = genai.Client(api_key=...)` and `client.aio.models.generate_content(...)` for async. Currently pinned at `google-genai==2.6.0`. Pin the version in `requirements.txt` immediately after install — this SDK has changed API shape multiple times.
+- **Gemini SDK version drift** — pin in `requirements.txt` once working. The Python SDK has changed API shape multiple times. Verify against the installed version before writing new Gemini code.
 - **ChromaDB default embeddings** download a sentence-transformers model on first use. Configure Gemini embeddings explicitly to skip this.
-- **SQLite foreign keys** are off by default. Enable with `PRAGMA foreign_keys = ON;` on every connection.
+- **SQLite foreign keys** are off by default. Enable with `PRAGMA foreign_keys = ON;` on every connection — but **issue it via `conn.executescript()`, not `conn.execute()`**. Python's `sqlite3` wraps non-DDL statements in implicit transactions by default, and `PRAGMA foreign_keys` is a no-op when set inside a transaction. `executescript()` runs outside that transaction management, so the PRAGMA actually takes effect. Verify with `conn.execute('PRAGMA foreign_keys;').fetchone()` from Python — must return `1`, not `0`. The `sqlite3` CLI reports its own session state, so always check from Python, not from the shell.
 - **PyWebView transparency on Windows** needs `transparent=True` AND React root with `background: transparent`. Test with a colored shape so you know it's working.
 - **pynput on Windows** can have issues if not started on a background thread. Threading model matters.
 - **Alt+Space conflicts** with Windows "system menu" by default. May need to suppress default behavior or choose a different hotkey if it misbehaves.
@@ -362,6 +412,9 @@ if call_count >= 5:  # what does 5 mean? why 5?
 - **Gemini malformed JSON in function calls** — wrap parsing in try/except, reprompt on failure.
 - **openWakeWord requires 16kHz mono** audio — wrong sample rate = silent failure.
 - **Piper outputs raw PCM** by default — wrap in WAV header before playback or pipe directly to sounddevice.
+- **Edge WebView2 resolves `localhost` to IPv6 (`::1`) for WebSocket**, but to IPv4 (`127.0.0.1`) for HTTP. uvicorn binds IPv4 only, so WebSocket URLs used from inside PyWebView must be explicit: `ws://127.0.0.1:<port>`, not `ws://localhost:<port>`. HTTP URLs can keep `localhost`. The same quirk breaks Vite HMR inside PyWebView — workaround is to close and relaunch the PyWebView window after frontend changes; the Vite server itself does not need to restart.
+- **pynput `key.char` is unreliable with Ctrl modifiers** — when Ctrl is held, the character for J is `'\x0a'` (line feed), not `'j'`, so `key.char.lower() == 'j'` silently fails. Use `key.vk == ord('J')` instead; the Windows Virtual Key code is stable regardless of modifier state. Applies to every Ctrl-letter hotkey. (Windows-only; if v2 ever ports to macOS/Linux, every `key.vk` check needs an OS-appropriate replacement.)
+- **`asyncio.create_task()` results must be held by a strong reference**, or the garbage collector will silently cancel them. Store long-lived tasks (drainers, state machines, watchers) on `app.state.<name>` inside the lifespan context manager. Symptom of forgetting: the coroutine runs once or twice, then stops with no error in the logs.
 
 ## When to update this file
 

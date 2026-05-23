@@ -63,6 +63,16 @@ class Settings(BaseSettings):
     recordings_dir: Path = Path("data/recordings")
     runtime_settings_path: Path = Path("data/settings.json")
 
+    # STT — Groq Whisper (Day 9)
+    # stt_model is pinned here so Day-12 can swap to whisper-large-v3-turbo without touching code.
+    # stt_language="en" improves accuracy for technical identifiers (ABL1, T315I, RNA-seq).
+    # stt_temperature=0.0 keeps output deterministic when re-testing the same WAV.
+    # stt_timeout_seconds is a hard ceiling so a hung Groq call cannot wedge the dispatcher.
+    stt_model: str = "whisper-large-v3"
+    stt_language: str | None = "en"
+    stt_temperature: float = 0.0
+    stt_timeout_seconds: float = 10.0
+
     # Misc
     app_version: str = "0.1.0"
     request_id_header: str = "X-Request-ID"

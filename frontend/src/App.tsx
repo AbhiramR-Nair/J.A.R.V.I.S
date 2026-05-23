@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 
 import { API_BASE } from "./api/config";
+import { ChatPanel, type ChatMessage } from "./components/ChatPanel";
 import { useVoiceEvents } from "./hooks/useWebSocket";
 
 function App() {
@@ -13,6 +14,11 @@ function App() {
   const [muted, setMuted] = useState(false);
   // Briefly shows the saved filename after a recording completes; clears after 2s.
   const [lastRecording, setLastRecording] = useState<string | null>(null);
+  // Day 9: in-memory chat history; persisted to SQLite from Day 11 onward.
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [transcribing, setTranscribing] = useState(false);
+  // Error toast — shown for 3s then auto-cleared.
+  const [errorToast, setErrorToast] = useState<string | null>(null);
 
   // useVoiceEvents opens the WebSocket, logs every frame, and returns the last event.
   const lastEvent = useVoiceEvents();
@@ -28,8 +34,24 @@ function App() {
       setLastRecording(filename);
       const timer = setTimeout(() => setLastRecording(null), 2000);
       return () => clearTimeout(timer);
+    } else if (lastEvent?.type === "transcribing") {
+      setTranscribing(true);
+    } else if (lastEvent?.type === "transcription_complete") {
+      setTranscribing(false);
+      console.log(`transcript: "${lastEvent.text}" (${lastEvent.latency_ms.toFixed(0)}ms)`);
+      setMessages((prev) => [...prev, { role: "user", text: lastEvent.text }]);
+    } else if (lastEvent?.type === "transcription_failed") {
+      setTranscribing(false);
+      setErrorToast(lastEvent.error);
     }
   }, [lastEvent]);
+
+  // Auto-clear the error toast after 3 seconds.
+  useEffect(() => {
+    if (!errorToast) return;
+    const timer = setTimeout(() => setErrorToast(null), 3000);
+    return () => clearTimeout(timer);
+  }, [errorToast]);
 
   // Call /health, then render both the JSON body and the X-Request-ID header.
   // Reading the header proves the backend's CORS expose_headers is set right.
@@ -44,12 +66,13 @@ function App() {
     }
   }
 
-  // Derive a human-readable status label from mute + last event state.
-  // recording_saved briefly overrides to show the filename, then reverts to idle.
+  // Derive a human-readable status label from current voice state.
   const statusLabel = muted
     ? "muted"
     : lastEvent?.type === "ptt_start"
     ? "listening"
+    : transcribing
+    ? "transcribing…"
     : lastRecording
     ? `saved: ${lastRecording}`
     : "idle";
@@ -105,6 +128,16 @@ function App() {
             {ping}
           </div>
         )}
+
+        {/* Error toast — auto-fades after 3s via the useEffect above */}
+        {errorToast && (
+          <div className="bg-red-900/60 backdrop-blur-sm rounded-lg px-4 py-2 text-red-200 font-mono text-xs max-w-sm text-center">
+            {errorToast}
+          </div>
+        )}
+
+        {/* Chat history — user transcripts for now; assistant replies land Day 11 */}
+        <ChatPanel messages={messages} />
       </div>
     </div>
   );

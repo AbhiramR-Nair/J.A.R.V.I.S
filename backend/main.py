@@ -24,6 +24,7 @@ from backend.config.settings import get_settings
 from backend.database.db import get_db
 from backend.desktop import hotkeys
 from backend.voice.audio import AudioRecorder
+from backend.voice.stt import STTError, STTService
 
 # Logging is set up once here (console + rotating file + request-ID patcher).
 # Replaces the Day-2 inline loguru setup so the request_id_var actually threads through.
@@ -70,9 +71,37 @@ async def _handle_event_side_effects(
         wav_bytes = await loop.run_in_executor(None, recorder.stop_recording)
         if wav_bytes:
             path = await _save_recording(wav_bytes)
-            # Inject recording_saved into the queue so it gets broadcast to the UI
-            # and any future consumer (Day 9 STT) can pick it up.
+            # Inject recording_saved into the queue so the STT branch picks it up.
             await queue.put({"type": "recording_saved", "path": str(path)})
+        else:
+            # Tap too fast, or recording never started before release.
+            # Give explicit feedback so the user knows the press was too short.
+            await ws_manager.broadcast({"type": "transcription_failed", "error": "I didn't hear anything."})
+
+    elif etype == "recording_saved":
+        # Day-8 hand-off: recording_saved is now intercepted here to trigger STT.
+        # The event still flows through to broadcast() below so the UI filename badge
+        # keeps working as a debug signal during Week 2.
+        path = Path(event["path"])
+        await ws_manager.broadcast({"type": "transcribing", "path": str(path)})
+
+        try:
+            result = await app.state.stt_service.transcribe(path)
+        except STTError as exc:
+            # STTError messages are pre-sanitised in stt.py — safe to send to the UI verbatim.
+            await ws_manager.broadcast({
+                "type": "transcription_failed",
+                "error": str(exc),
+            })
+            return
+
+        await ws_manager.broadcast({
+            "type": "transcription_complete",
+            "text": result.text,
+            "latency_ms": result.latency_ms,
+        })
+        # TODO Day 10: add elif etype == "chat_response" branch — TTS speaks the text.
+        # TODO Day 11: replace echo with real LLM call via services/conversation.py.
 
     elif etype == "mute_toggle":
         # Muting mid-recording aborts cleanly — discard the partial audio.
@@ -100,7 +129,11 @@ async def _dispatch_events(
             await _handle_event_side_effects(app, event, queue)
         except Exception as exc:
             logger.exception(f"dispatcher side-effect error: {exc}")
-        await ws_manager.broadcast(event)
+        # recording_saved is consumed by the STT branch, which broadcasts transcribing +
+        # transcription_complete/failed. Re-broadcasting it here would arrive milliseconds
+        # after transcription_failed and cause React to batch-drop the error toast state update.
+        if event.get("type") != "recording_saved":
+            await ws_manager.broadcast(event)
 
 
 # lifespan replaces the deprecated @app.on_event("startup") pattern.
@@ -135,13 +168,25 @@ async def lifespan(app: FastAPI):
         max_seconds=get_settings().recording_max_seconds,
     )
 
-    # ready flag: dispatcher checks this before acting on hotkey events.
-    # Prevents audio start/stop from firing before the event loop is fully alive.
+    # Build the STTService with one persistent AsyncGroq client.
+    # Constructed after audio_recorder so shutdown can mirror LIFO order.
+    s = get_settings()
+    app.state.stt_service = STTService(
+        api_key=s.groq_api_key,
+        model=s.stt_model,
+        language=s.stt_language,
+        temperature=s.stt_temperature,
+        timeout_seconds=s.stt_timeout_seconds,
+    )
+
+    # ready flag: gate on BOTH recorder and stt_service being fully constructed.
+    # An early PTT press before this line cannot trigger a half-built service.
     app.state.ready = True
 
     yield  # server runs here
 
-    # Shutdown: abort any in-flight recording so the mic is released cleanly.
+    # Shutdown LIFO: STT first (no open streams), then recorder (releases mic).
+    await app.state.stt_service.close()
     if app.state.audio_recorder.is_recording:
         app.state.audio_recorder.stop_recording()
         logger.info("audio recorder: stopped on shutdown")

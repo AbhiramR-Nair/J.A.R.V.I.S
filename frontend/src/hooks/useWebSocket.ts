@@ -11,7 +11,11 @@ export type VoiceEvent =
   | { type: "ptt_start" }
   | { type: "ptt_end" }
   | { type: "mute_toggle" }
-  | { type: "recording_saved"; path: string };
+  | { type: "recording_saved"; path: string }
+  // Day 9 — STT events
+  | { type: "transcribing"; path: string }
+  | { type: "transcription_complete"; text: string; latency_ms: number }
+  | { type: "transcription_failed"; error: string };
 
 export function useVoiceEvents(): VoiceEvent | null {
   const [last, setLast] = useState<VoiceEvent | null>(null);
