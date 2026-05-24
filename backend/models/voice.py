@@ -2,6 +2,7 @@
 # These define the API contract; FastAPI uses them for validation and OpenAPI docs.
 # Fields marked Day-N comments are placeholders until that day's work fills them.
 
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -11,9 +12,59 @@ VoiceStateLiteral = Literal[
 ]
 
 
+# String enum so values serialise as plain strings in JSON (e.g. "idle" not "VoiceState.IDLE").
+# Used by ConversationOrchestrator; the Literal above is used by Pydantic field declarations.
+class VoiceState(str, Enum):
+    IDLE = "idle"
+    LISTENING = "listening"
+    TRANSCRIBING = "transcribing"
+    THINKING = "thinking"
+    SPEAKING = "speaking"
+    MUTED = "muted"
+    ERROR = "error"
+
+
 class VoiceStateResponse(BaseModel):
     state: VoiceStateLiteral
     message: str | None = None  # human-readable note, mainly for "error"
+
+
+# ---------------------------------------------------------------------------
+# Day 11 — WebSocket event models (backend → frontend)
+# ---------------------------------------------------------------------------
+
+# Broadcast on every state transition. Drives the UI label and (Week 3) blob animation.
+class StateChangedEvent(BaseModel):
+    type: Literal["state_changed"] = "state_changed"
+    state: VoiceStateLiteral
+    prev_state: VoiceStateLiteral
+
+
+# Sent once the LLM finishes generating. Frontend adds the text bubble immediately;
+# audio follows separately via speaking_started / speaking_ended.
+class AssistantMessageEvent(BaseModel):
+    type: Literal["assistant_message"] = "assistant_message"
+    text: str
+    turn_id: str
+
+
+# Sent just before tts.speak() is called so the blob can animate on the first frame.
+class SpeakingStartedEvent(BaseModel):
+    type: Literal["speaking_started"] = "speaking_started"
+    turn_id: str
+
+
+# Sent after tts.speak() returns cleanly; triggers the SPEAKING → IDLE transition.
+class SpeakingEndedEvent(BaseModel):
+    type: Literal["speaking_ended"] = "speaking_ended"
+    turn_id: str
+
+
+# Mirror of transcription_failed — broadcast when TTS errors so the UI can show a toast.
+class SpeakingFailedEvent(BaseModel):
+    type: Literal["speaking_failed"] = "speaking_failed"
+    reason: str
+    turn_id: str
 
 
 # Day 8: audio device models

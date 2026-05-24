@@ -1,50 +1,74 @@
 // Day 2 placeholder — transparent window loads this via PyWebView.
 // Day 3 adds a temporary "Ping backend" button and a WebSocket smoke test.
 // Day 7 adds drag bar, close button, visible test shape, and voice event status badge.
+// Day 11: useVoiceEvents refactored to reducer queue; handles assistant_message +
+//         state_changed + speaking_failed from the new state machine.
 // Real UI (blob, chat panel, settings) is built in Weeks 2-3.
 import { useEffect, useState } from "react";
 
 import { API_BASE } from "./api/config";
 import { ChatPanel, type ChatMessage } from "./components/ChatPanel";
 import { useVoiceEvents } from "./hooks/useWebSocket";
+import type { VoiceStateLiteral } from "./hooks/useWebSocket";
 
 function App() {
   // Holds the /health result + the X-Request-ID we read off the response header.
   const [ping, setPing] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
-  // Briefly shows the saved filename after a recording completes; clears after 2s.
+  // Briefly shows the saved filename after a recording completes; clears via separate effect.
   const [lastRecording, setLastRecording] = useState<string | null>(null);
   // Day 9: in-memory chat history; persisted to SQLite from Day 11 onward.
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [transcribing, setTranscribing] = useState(false);
   // Error toast — shown for 3s then auto-cleared.
   const [errorToast, setErrorToast] = useState<string | null>(null);
+  // Day 11: voice state from the orchestrator's state_changed events.
+  const [voiceState, setVoiceState] = useState<VoiceStateLiteral>("idle");
 
-  // useVoiceEvents opens the WebSocket, logs every frame, and returns the last event.
-  const lastEvent = useVoiceEvents();
+  // useVoiceEvents returns a FIFO queue + dispatch. Consume events[0] one at a time.
+  const { events, dispatch } = useVoiceEvents();
 
-  // mute_toggle flips the muted state; recording_saved flashes the filename for 2s.
+  // Process the head of the event queue. Dispatches event_consumed at the end so
+  // the next event becomes events[0] and triggers another run of this effect.
   useEffect(() => {
-    if (lastEvent?.type === "mute_toggle") {
+    const event = events[0];
+    if (!event) return;
+
+    if (event.type === "mute_toggle") {
       setMuted((m) => !m);
-    } else if (lastEvent?.type === "recording_saved") {
-      // Extract just the filename from the full path for a compact badge display.
-      const filename = lastEvent.path.split(/[\\/]/).pop() ?? lastEvent.path;
-      console.log("recording saved:", lastEvent.path);
+    } else if (event.type === "recording_saved") {
+      const filename = event.path.split(/[\\/]/).pop() ?? event.path;
+      console.log("recording saved:", event.path);
       setLastRecording(filename);
-      const timer = setTimeout(() => setLastRecording(null), 2000);
-      return () => clearTimeout(timer);
-    } else if (lastEvent?.type === "transcribing") {
+    } else if (event.type === "transcribing") {
       setTranscribing(true);
-    } else if (lastEvent?.type === "transcription_complete") {
+    } else if (event.type === "transcription_complete") {
       setTranscribing(false);
-      console.log(`transcript: "${lastEvent.text}" (${lastEvent.latency_ms.toFixed(0)}ms)`);
-      setMessages((prev) => [...prev, { role: "user", text: lastEvent.text }]);
-    } else if (lastEvent?.type === "transcription_failed") {
+      console.log(`transcript: "${event.text}" (${event.latency_ms.toFixed(0)}ms)`);
+      setMessages((prev) => [...prev, { role: "user", text: event.text }]);
+    } else if (event.type === "transcription_failed") {
       setTranscribing(false);
-      setErrorToast(lastEvent.error);
+      setErrorToast(event.error);
+    } else if (event.type === "state_changed") {
+      // Orchestrator state drives the status label from Day 11 onward.
+      setVoiceState(event.state);
+      if (event.state === "muted") setMuted(true);
+      if (event.prev_state === "muted" && event.state !== "muted") setMuted(false);
+    } else if (event.type === "assistant_message") {
+      setMessages((prev) => [...prev, { role: "assistant", text: event.text }]);
+    } else if (event.type === "speaking_failed") {
+      setErrorToast(event.reason);
     }
-  }, [lastEvent]);
+
+    dispatch({ type: "event_consumed" });
+  }, [events, dispatch]);
+
+  // Auto-clear lastRecording badge after 2s.
+  useEffect(() => {
+    if (!lastRecording) return;
+    const timer = setTimeout(() => setLastRecording(null), 2000);
+    return () => clearTimeout(timer);
+  }, [lastRecording]);
 
   // Auto-clear the error toast after 3 seconds.
   useEffect(() => {
@@ -66,11 +90,12 @@ function App() {
     }
   }
 
-  // Derive a human-readable status label from current voice state.
-  const statusLabel = muted
-    ? "muted"
-    : lastEvent?.type === "ptt_start"
-    ? "listening"
+  // Derive a human-readable status label. Prefer voiceState from the orchestrator
+  // (state_changed events); fall back to ad-hoc state for pre-Day-11 compatibility.
+  const statusLabel = voiceState !== "idle"
+    ? voiceState === "muted" ? "Muted" : voiceState
+    : muted
+    ? "Muted"
     : transcribing
     ? "transcribing…"
     : lastRecording
@@ -114,6 +139,12 @@ function App() {
           Status: {statusLabel}
         </div>
 
+        {/* Day 11: live state label fed by state_changed events from the orchestrator.
+            Blob animations (Week 3) will replace this; for now it's the verification tool. */}
+        <div className="text-xs opacity-60 text-cyan-200 font-mono">
+          {voiceState === "muted" ? "Muted" : voiceState}
+        </div>
+
         <div className="bg-black/30 backdrop-blur-sm rounded-2xl px-6 py-4 text-cyan-400 font-mono text-sm">
           J.A.R.V.I.S — online
         </div>
@@ -136,7 +167,7 @@ function App() {
           </div>
         )}
 
-        {/* Chat history — user transcripts for now; assistant replies land Day 11 */}
+        {/* Chat history — user transcripts + assistant replies from Day 11 */}
         <ChatPanel messages={messages} />
       </div>
     </div>

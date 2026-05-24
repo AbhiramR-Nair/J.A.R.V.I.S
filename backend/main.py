@@ -9,8 +9,6 @@ import asyncio
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,8 +21,10 @@ from backend.config.runtime_settings import get_input_device
 from backend.config.settings import get_settings
 from backend.database.db import get_db
 from backend.desktop import hotkeys
+from backend.llm.router import get_router
+from backend.services.conversation import ConversationOrchestrator
 from backend.voice.audio import AudioRecorder
-from backend.voice.stt import STTError, STTService
+from backend.voice.stt import STTService
 from backend.voice.tts import TTSService
 
 # Logging is set up once here (console + rotating file + request-ID patcher).
@@ -32,109 +32,49 @@ from backend.voice.tts import TTSService
 configure_logging()
 
 
-async def _save_recording(wav_bytes: bytes) -> Path:
-    """Write WAV bytes to data/recordings/{iso8601}.wav and return the path."""
-    recordings_dir = get_settings().recordings_dir
-    recordings_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
-    path = recordings_dir / f"{timestamp}.wav"
-    path.write_bytes(wav_bytes)
-    logger.info(f"recording saved: {path}")
-    return path
+async def _handle_event_side_effects(app: "FastAPI", event: dict) -> None:
+    """Route PTT/mute hotkey events to the conversation orchestrator.
 
-
-async def _handle_event_side_effects(
-    app: "FastAPI", event: dict, queue: "asyncio.Queue[dict]"
-) -> None:
+    Thin routing layer — all audio, STT, LLM, and TTS logic now lives in
+    ConversationOrchestrator. Guard against events that arrive in the ~3s
+    window before lifespan finishes constructing all subsystems.
     """
-    Branch on event type and drive audio start/stop as side-effects.
-
-    Runs inside _dispatch_events before the WebSocket broadcast so the UI
-    always gets the event even if audio fails.
-
-    sounddevice start/stop are sync and potentially blocking, so they run in
-    a threadpool executor rather than directly on the asyncio event loop.
-    """
-    # Drop events that arrive before lifespan finishes wiring everything up.
     if not getattr(app.state, "ready", False):
         return
+    # Defensive: orchestrator is constructed after ready=True, but guard anyway.
+    if not hasattr(app.state, "conversation"):
+        return
 
-    recorder = app.state.audio_recorder
-    loop = asyncio.get_running_loop()
     etype = event.get("type")
+    conv = app.state.conversation
 
     if etype == "ptt_start":
-        # run_in_executor hands the blocking call to a threadpool thread so the
-        # event loop stays free to handle WebSocket messages during recording.
-        await loop.run_in_executor(None, recorder.start_recording)
-
+        await conv.on_ptt_start()
     elif etype == "ptt_end":
-        wav_bytes = await loop.run_in_executor(None, recorder.stop_recording)
-        if wav_bytes:
-            path = await _save_recording(wav_bytes)
-            # Inject recording_saved into the queue so the STT branch picks it up.
-            await queue.put({"type": "recording_saved", "path": str(path)})
-        else:
-            # Tap too fast, or recording never started before release.
-            # Give explicit feedback so the user knows the press was too short.
-            await ws_manager.broadcast({"type": "transcription_failed", "error": "I didn't hear anything."})
-
-    elif etype == "recording_saved":
-        # Day-8 hand-off: recording_saved is now intercepted here to trigger STT.
-        # The event still flows through to broadcast() below so the UI filename badge
-        # keeps working as a debug signal during Week 2.
-        path = Path(event["path"])
-        await ws_manager.broadcast({"type": "transcribing", "path": str(path)})
-
-        try:
-            result = await app.state.stt_service.transcribe(path)
-        except STTError as exc:
-            # STTError messages are pre-sanitised in stt.py — safe to send to the UI verbatim.
-            await ws_manager.broadcast({
-                "type": "transcription_failed",
-                "error": str(exc),
-            })
-            return
-
-        await ws_manager.broadcast({
-            "type": "transcription_complete",
-            "text": result.text,
-            "latency_ms": result.latency_ms,
-        })
-        # TODO Day 10: add elif etype == "chat_response" branch — TTS speaks the text.
-        # TODO Day 11: replace echo with real LLM call via services/conversation.py.
-
+        await conv.on_ptt_end()
     elif etype == "mute_toggle":
-        # Muting mid-recording aborts cleanly — discard the partial audio.
-        if recorder.is_recording:
-            await loop.run_in_executor(None, recorder.stop_recording)
-            logger.info("audio recorder: aborted by mute toggle")
+        await conv.on_mute_toggle()
 
 
 async def _dispatch_events(
     app: "FastAPI", queue: "asyncio.Queue[dict]"
 ) -> None:
-    """
-    Single consumer of the hotkey event queue. Runs for the server lifetime.
+    """Single consumer of the hotkey event queue. Runs for the server lifetime.
 
     For each event:
-      1. Side-effects (audio start/stop; Day 11 will add conversation state)
-      2. Broadcast to all WebSocket clients
+      1. Route to the conversation orchestrator (side-effects live there now)
+      2. Broadcast to all WebSocket clients so the frontend also sees raw events
 
-    Side-effect failures are caught and logged so a broken audio path never
-    silences the UI — the badge still updates even if the mic dies.
+    Side-effect failures are caught and logged so a broken orchestrator path
+    never silences the UI — the WebSocket badge still updates.
     """
     while True:
         event = await queue.get()
         try:
-            await _handle_event_side_effects(app, event, queue)
+            await _handle_event_side_effects(app, event)
         except Exception as exc:
             logger.exception(f"dispatcher side-effect error: {exc}")
-        # recording_saved is consumed by the STT branch, which broadcasts transcribing +
-        # transcription_complete/failed. Re-broadcasting it here would arrive milliseconds
-        # after transcription_failed and cause React to batch-drop the error toast state update.
-        if event.get("type") != "recording_saved":
-            await ws_manager.broadcast(event)
+        await ws_manager.broadcast(event)
 
 
 # lifespan replaces the deprecated @app.on_event("startup") pattern.
@@ -183,13 +123,25 @@ async def lifespan(app: FastAPI):
     # Build TTSService after STTService so shutdown closes in reverse order: tts → stt → recorder.
     app.state.tts_service = TTSService(s)
 
-    # ready flag: gate on all three subsystems being fully constructed.
+    # Build the ConversationOrchestrator last; it depends on all three services above.
+    # broadcast is ws_manager.broadcast so the orchestrator can push events to the React app.
+    app.state.conversation = ConversationOrchestrator(
+        recorder=app.state.audio_recorder,
+        stt=app.state.stt_service,
+        llm=get_router(),
+        tts=app.state.tts_service,
+        broadcast=ws_manager.broadcast,
+        settings=s,
+    )
+
+    # ready flag: gate on all four subsystems being fully constructed.
     # An early PTT press before this line cannot trigger a half-built service.
     app.state.ready = True
 
     yield  # server runs here
 
-    # Shutdown LIFO: tts → stt → recorder (reverse of construction order).
+    # Shutdown LIFO: conversation → tts → stt → recorder (reverse of construction order).
+    await app.state.conversation.close()
     await app.state.tts_service.close()
     await app.state.stt_service.close()
     if app.state.audio_recorder.is_recording:

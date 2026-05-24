@@ -195,3 +195,25 @@ def get_conversation_messages(conversation_id: int) -> list[dict]:
         (conversation_id,),
     ).fetchall()
     return [_row_to_dict(r) for r in rows]
+
+
+def get_recent_project_messages(project_id: int, limit: int = 4) -> list[dict]:
+    """Return the last `limit` messages across all conversations for this project.
+
+    Fetches newest-first (so LIMIT cuts at the right end), then reverses to
+    oldest-first so the LLM reads them in chronological order.
+    Used by ConversationOrchestrator._build_context for short-term recency context.
+    """
+    conn = get_db()
+    rows = conn.execute(
+        """
+        SELECT id, role, content, created_at
+        FROM messages
+        WHERE project_id = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (project_id, limit),
+    ).fetchall()
+    # Reverse: DB returned newest-first; LLM needs oldest-first.
+    return [_row_to_dict(r) for r in reversed(rows)]

@@ -169,6 +169,17 @@ class TTSService:
 
         return result
 
+    async def cancel_playback(self) -> None:
+        """Stop any in-flight TTS playback immediately. Safe to call when nothing plays.
+
+        sd.stop() is global to the sounddevice module — it stops all active streams,
+        not just TTS. Fine in v1 (only TTS uses sd.play); revisit if mic monitoring
+        ever uses sd.play concurrently. Runs in executor because sd.stop() is a
+        blocking PortAudio call.
+        """
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, sd.stop)
+
     async def close(self) -> None:
         """No-op today — Piper has no persistent process to clean up.
 

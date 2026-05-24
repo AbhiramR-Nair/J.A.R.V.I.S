@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     tts_output_device: int | None = None
     tts_timeout_seconds: int = 30
 
+    # Conversation orchestrator (Day 11)
+    error_recovery_seconds: int = 3      # how long ERROR state waits before auto-recovering to IDLE
+    recent_messages_limit: int = 4       # last N messages used as recency context for LLM
+    semantic_k: int = 3                  # top-k ChromaDB results for semantic context
+    context_char_cap: int = 6000         # crude char cap on injected context (~1500 tokens)
+
     # Misc
     app_version: str = "0.1.0"
     request_id_header: str = "X-Request-ID"
