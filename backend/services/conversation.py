@@ -34,18 +34,11 @@ from backend.models.voice import (
     StateChangedEvent,
     VoiceState,
 )
+from backend.prompts.system_prompts import JARVIS_SYSTEM_PROMPT
 from backend.voice.audio import AudioCaptureError, AudioRecorder
 from backend.voice.cleanup import prune_recordings
 from backend.voice.stt import STTError, STTService
 from backend.voice.tts import TTSError, TTSService
-
-# Speech-optimised: no markdown, no bullets — the user hears the response.
-_BASE_SYSTEM_PROMPT = (
-    "You are J.A.R.V.I.S., an intelligent research and productivity assistant. "
-    "The user will hear your response as speech, so keep replies concise and "
-    "conversational. Avoid markdown, bullet points, and long lists. "
-    "Answer questions directly."
-)
 
 
 class ConversationOrchestrator:
@@ -437,11 +430,11 @@ class ConversationOrchestrator:
         return path
 
     def _build_system_prompt(self, context: str) -> str:
-        """Append memory context to the base system prompt when available."""
+        """Append memory context to the JARVIS system prompt when available."""
         if not context:
-            return _BASE_SYSTEM_PROMPT
+            return JARVIS_SYSTEM_PROMPT
         return (
-            _BASE_SYSTEM_PROMPT
+            JARVIS_SYSTEM_PROMPT
             + "\n\nYou have access to recent conversation and relevant past notes "
               "from the user's active project. Use them when they help; ignore them "
               "when they don't.\n\n" + context
