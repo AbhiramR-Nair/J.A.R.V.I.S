@@ -493,10 +493,13 @@ result → LLM → … (max 5 iterations per Day 20 plan). Critical rules:
   for different flags; `--output_raw` is the raw-PCM-to-stdout flag for the Windows
   amd64 build used here. Verified against the installed binary in Day 10.
 - **Piper sample rate is hardcoded at 22050.** Lives in `settings.tts_sample_rate`
-  and matches `en_US-lessac-medium.onnx.json`. A different voice (e.g.
-  `en_US-libritts-high` at 16kHz) will play at the wrong pitch with **no error
-  signal** — chipmunk audio is the only symptom. Read the `.onnx.json` sidecar at
-  TTS service init when voice swapping becomes a feature (Day 17).
+  and matches the active voice's `.onnx.json` sidecar. A different voice at a
+  different rate (e.g. `en_US-libritts-high` at 16kHz) will play at the wrong pitch
+  with **no error signal** — chipmunk audio is the only symptom. Always run
+  `Get-Content <voice>.onnx.json | Select-String "sample_rate"` before swapping.
+  **Day 13 exercised this path**: `en_GB-alan-medium` is also 22050 Hz — confirmed
+  safe. Both `en_US-lessac-medium` and `en_GB-alan-medium` are retained in
+  `piper_voices/`; revert is a one-line change in `settings.piper_voice_path`.
 - **`sd.play(arr, dtype=...)` raises** when `arr` is already a typed numpy array.
   Just pass `sd.play(arr, samplerate=...)` and let sounddevice infer dtype.
 - **`STTService.transcribe()` takes `Path`, not bytes.** The Groq SDK streams from

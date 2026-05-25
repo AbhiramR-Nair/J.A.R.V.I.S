@@ -122,7 +122,21 @@ research-jarvis/
 │   │   ├── chat.py
 │   │   ├── memory.py
 │   │   ├── voice.py
-│   │   └── health.py
+│   │   ├── audio.py
+│   │   ├── health.py
+│   │   └── debug.py                # Dev-only: GET /debug/system-prompt
+│   │
+│   ├── prompts/                    # Modular system prompts (added Day 13)
+│   │   ├── __init__.py
+│   │   ├── loader.py               # auto-discovers + sorts + concatenates *.md
+│   │   ├── system_prompts.py       # exposes JARVIS_SYSTEM_PROMPT constant
+│   │   └── system/
+│   │       ├── 00_base_identity.md
+│   │       ├── 10_personality.md
+│   │       ├── 20_behavior.md
+│   │       ├── 30_domain_context.md
+│   │       ├── 40_safety.md
+│   │       └── 90_examples.md      # heaviest lifter — edit examples, not rules
 │   │
 │   ├── llm/                        # LLM provider abstraction
 │   │   ├── base.py
@@ -260,7 +274,7 @@ research-jarvis/
 | Audio I/O | sounddevice | NOT PyAudio |
 | Wake word | openWakeWord | Week 4 only, optional |
 | STT | Groq Whisper-large-v3 | cloud only, no fallback in v1 |
-| TTS | Piper | local, `en_US-lessac-medium` default |
+| TTS | Piper | local, `en_GB-alan-medium` (swapped Day 13; lessac retained as fallback) |
 | LLM primary | Gemini (Flash + Pro) | with native function calling |
 | LLM fallback | OpenAI GPT-4o / 4o-mini | |
 | Web search | Tavily + Gemini grounding | |
