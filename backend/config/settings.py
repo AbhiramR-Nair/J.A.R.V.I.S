@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     # tts_timeout_seconds: hard ceiling on Piper subprocess; long replies on a slow CPU
     #   can take several seconds to synth — 30s is a generous but sane upper bound.
     piper_binary_path: Path = Path("piper/piper/piper.exe")
-    piper_voice_path: Path = Path("piper_voices/en_US-lessac-medium.onnx")
+    piper_voice_path: Path = Path("piper_voices/en_GB-alan-medium.onnx")
     tts_sample_rate: int = 22050
     tts_output_device: int | None = None
     tts_timeout_seconds: int = 30
