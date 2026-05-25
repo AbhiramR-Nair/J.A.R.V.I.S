@@ -54,6 +54,8 @@ async def _handle_event_side_effects(app: "FastAPI", event: dict) -> None:
         await conv.on_ptt_end()
     elif etype == "mute_toggle":
         await conv.on_mute_toggle()
+    elif etype == "recording_cap_hit":
+        await conv.on_recording_cap_hit()
 
 
 async def _dispatch_events(
@@ -100,13 +102,21 @@ async def lifespan(app: FastAPI):
 
     # Build the AudioRecorder with the user's saved device, or None for system default.
     # Device choice is persisted in data/settings.json via runtime_settings.
+    # notify_cap_hit bridges the PortAudio callback thread into the asyncio event queue
+    # via loop.call_soon_threadsafe — the only safe way to enqueue from a non-async thread.
     device = get_input_device()
+    def _on_cap_hit() -> None:
+        loop.call_soon_threadsafe(
+            event_queue.put_nowait, {"type": "recording_cap_hit"}
+        )
+
     app.state.audio_recorder = AudioRecorder(
         sample_rate=get_settings().audio_sample_rate,
         channels=get_settings().audio_channels,
         dtype=get_settings().audio_dtype,
         device_index=device["index"] if device else None,
         max_seconds=get_settings().recording_max_seconds,
+        notify_cap_hit=_on_cap_hit,
     )
 
     # Build the STTService with one persistent AsyncGroq client.

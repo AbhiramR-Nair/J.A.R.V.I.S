@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     audio_chunk_ms: int = 50            # sounddevice callback granularity in ms
     recording_max_seconds: int = 30     # PTT hard cap; auto-stops to protect memory
     recordings_dir: Path = Path("data/recordings")
+    recordings_max_age_days: int = 14    # WAV files older than this are deleted on each save
+    audio_open_timeout_seconds: float = 2.0  # reserved for device open validation
     runtime_settings_path: Path = Path("data/settings.json")
 
     # STT — Groq Whisper (Day 9)

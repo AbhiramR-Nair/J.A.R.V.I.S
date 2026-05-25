@@ -67,6 +67,24 @@ class SpeakingFailedEvent(BaseModel):
     turn_id: str
 
 
+# Day 12: broadcast when the 30s PTT cap fires so the UI can warn the user.
+class RecordingCapHitEvent(BaseModel):
+    type: Literal["recording_cap_hit"] = "recording_cap_hit"
+
+
+# Day 12: broadcast when the orchestrator successfully rebuilds against the default device.
+class AudioDeviceRecoveredEvent(BaseModel):
+    type: Literal["audio_device_recovered"] = "audio_device_recovered"
+
+
+# Day 12: response model for POST /audio/test-mic.
+class TestMicResult(BaseModel):
+    success: bool
+    peak_amplitude: float   # normalised 0.0–1.0; < 0.05 suggests silent/broken mic
+    duration_ms: int
+    error: str | None = None
+
+
 # Day 8: audio device models
 class DeviceInfo(BaseModel):
     index: int

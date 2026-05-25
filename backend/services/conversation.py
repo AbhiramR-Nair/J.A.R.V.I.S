@@ -26,13 +26,16 @@ from backend.llm.router import LLMRouter
 from backend.memory import importance, sqlite_store, vector_store
 from backend.models.voice import (
     AssistantMessageEvent,
+    AudioDeviceRecoveredEvent,
+    RecordingCapHitEvent,
     SpeakingEndedEvent,
     SpeakingFailedEvent,
     SpeakingStartedEvent,
     StateChangedEvent,
     VoiceState,
 )
-from backend.voice.audio import AudioRecorder
+from backend.voice.audio import AudioCaptureError, AudioRecorder
+from backend.voice.cleanup import prune_recordings
 from backend.voice.stt import STTError, STTService
 from backend.voice.tts import TTSError, TTSService
 
@@ -75,6 +78,10 @@ class ConversationOrchestrator:
 
         logger.info(f"conversation orchestrator initialized — state={self._state.value}")
 
+    @property
+    def state(self) -> VoiceState:
+        return self._state
+
     # ------------------------------------------------------------------
     # Public event handlers — called by the WS dispatcher (api/voice.py)
     # ------------------------------------------------------------------
@@ -86,8 +93,25 @@ class ConversationOrchestrator:
             if self._state != VoiceState.IDLE:
                 logger.warning(f"orchestrator: ptt_start in {self._state.value} — ignored")
                 return
-            # start_recording opens a PortAudio stream — fast, no executor needed.
-            self._recorder.start_recording()
+
+            try:
+                self._recorder.start_recording()
+            except AudioCaptureError as exc:
+                # Device open failed — try rebuilding against the system default device.
+                logger.warning(f"orchestrator: start_recording failed ({exc}), attempting rebuild")
+                try:
+                    self._rebuild_recorder()
+                    self._recorder.start_recording()
+                    # Rebuild succeeded: notify the UI before proceeding.
+                    await self._broadcast(AudioDeviceRecoveredEvent().model_dump())
+                    logger.info("orchestrator: recorder rebuilt on default device")
+                except AudioCaptureError as exc2:
+                    # Broadcast a toast before transitioning to ERROR so the user
+                    # sees the classified message, not just the state badge change.
+                    await self._broadcast({"type": "transcription_failed", "error": str(exc2)})
+                    await self._handle_error(str(exc2))
+                    return
+
             await self._transition(VoiceState.LISTENING)
 
     async def on_ptt_end(self) -> None:
@@ -97,23 +121,60 @@ class ConversationOrchestrator:
             if self._state != VoiceState.LISTENING:
                 logger.warning(f"orchestrator: ptt_end in {self._state.value} — ignored")
                 return
-            loop = asyncio.get_running_loop()
-            # stop_recording closes the PortAudio stream — run in executor to avoid blocking.
+            wav_bytes = await self._drain_recording()
+        # Lock released. Spawn the task outside the lock so the lock window stays tight.
+        if wav_bytes:
+            self._inflight = asyncio.create_task(self._process_turn(wav_bytes))
+            self._inflight.add_done_callback(self._on_turn_complete)
+
+    async def on_recording_cap_hit(self) -> None:
+        """30s PTT cap fired: drain the buffer, warn the UI, and dispatch the turn.
+
+        Treated as an implicit ptt_end — the recorder has already stopped buffering.
+        Dropped if the state is no longer LISTENING (e.g. user released PTT just
+        before the cap notification arrived).
+        """
+        async with self._lock:
+            if self._state != VoiceState.LISTENING:
+                logger.warning(
+                    f"orchestrator: recording_cap_hit in {self._state.value} — ignored"
+                )
+                return
+            # Warn the UI before draining so the user sees feedback immediately.
+            await self._broadcast(RecordingCapHitEvent().model_dump())
+            wav_bytes = await self._drain_recording()
+        # Lock released. Spawn as a task so this handler returns immediately.
+        if wav_bytes:
+            self._inflight = asyncio.create_task(self._process_turn(wav_bytes))
+            self._inflight.add_done_callback(self._on_turn_complete)
+
+    async def _drain_recording(self) -> bytes:
+        """Stop the recorder, validate the buffer, transition to TRANSCRIBING.
+
+        Must be called with self._lock already held.
+        Returns wav_bytes if the turn should be dispatched; b"" otherwise
+        (caller should not spawn a task on empty return).
+        """
+        loop = asyncio.get_running_loop()
+        # stop_recording closes the PortAudio stream — run in executor to avoid blocking.
+        # Raises AudioCaptureError if the callback stored a hardware fault mid-recording.
+        try:
             wav_bytes = await loop.run_in_executor(None, self._recorder.stop_recording)
-            if not wav_bytes:
-                # Press too short, or mic never opened — give explicit feedback.
-                await self._broadcast({"type": "transcription_failed", "error": "I didn't hear anything."})
-                await self._transition(VoiceState.IDLE)
-                return
-            # Defense: don't spawn a second task if one is somehow already running.
-            if self._inflight and not self._inflight.done():
-                logger.warning("orchestrator: ptt_end with inflight task — dropping new turn")
-                return
-            await self._transition(VoiceState.TRANSCRIBING)
-        # Lock released. Spawn the processing task so on_ptt_end returns immediately.
-        # The task reference is retained on self._inflight so mute can cancel it.
-        self._inflight = asyncio.create_task(self._process_turn(wav_bytes))
-        self._inflight.add_done_callback(self._on_turn_complete)
+        except AudioCaptureError as exc:
+            await self._broadcast({"type": "transcription_failed", "error": str(exc)})
+            await self._handle_error(str(exc))
+            return b""
+        if not wav_bytes:
+            # Press too short, or mic never opened — give explicit feedback.
+            await self._broadcast({"type": "transcription_failed", "error": "I didn't hear anything."})
+            await self._transition(VoiceState.IDLE)
+            return b""
+        # Defense: don't spawn a second task if one is somehow already running.
+        if self._inflight and not self._inflight.done():
+            logger.warning("orchestrator: drain attempted with inflight task — dropping")
+            return b""
+        await self._transition(VoiceState.TRANSCRIBING)
+        return wav_bytes
 
     async def on_mute_toggle(self) -> None:
         """Ctrl+Alt+J: mute any active state; unmute from muted.
@@ -177,6 +238,25 @@ class ConversationOrchestrator:
     # Internal — state machine
     # ------------------------------------------------------------------
 
+    def _rebuild_recorder(self) -> None:
+        """Replace self._recorder with a new instance on the system default device.
+
+        Must be called with self._lock already held. Does NOT open a stream —
+        the caller is responsible for calling start_recording() after rebuilding.
+        Uses index=None so Windows picks the current default regardless of how
+        device indices shifted after a disconnect/reconnect.
+        Preserves the notify_cap_hit callable from the old recorder.
+        """
+        notify = self._recorder._notify_cap_hit
+        self._recorder = AudioRecorder(
+            sample_rate=self._settings.audio_sample_rate,
+            channels=self._settings.audio_channels,
+            dtype=self._settings.audio_dtype,
+            device_index=None,
+            max_seconds=self._settings.recording_max_seconds,
+            notify_cap_hit=notify,
+        )
+
     async def _transition(self, new_state: VoiceState) -> None:
         # MUST be called with self._lock already held.
         # G3: this is the ONLY place that mutates self._state.
@@ -196,6 +276,9 @@ class ConversationOrchestrator:
         Must be called with self._lock already held.
         Auto-recovery task is stored on self._recovery_task to prevent GC.
         """
+        # Enforce the lock contract at dev time — a violation here means state
+        # would be mutated without serialisation, producing silent races.
+        assert self._lock.locked(), "_handle_error must be called with self._lock held"
         await self._transition(VoiceState.ERROR)
         logger.warning(f"orchestrator: error — {msg}")
         # G4: schedule auto-recovery; don't await (would hold the lock for 3s).
@@ -338,6 +421,19 @@ class ConversationOrchestrator:
         # File write is blocking I/O — run in executor to keep the loop free.
         await loop.run_in_executor(None, path.write_bytes, wav_bytes)
         logger.debug(f"orchestrator: recording saved → {path.name}")
+
+        # Non-fatal cleanup: prune WAV files older than the configured age.
+        # Runs in executor (sync file I/O); errors are logged and swallowed.
+        try:
+            await loop.run_in_executor(
+                None,
+                prune_recordings,
+                recordings_dir,
+                self._settings.recordings_max_age_days,
+            )
+        except Exception as exc:
+            logger.warning(f"orchestrator: recordings cleanup failed (non-fatal): {exc}")
+
         return path
 
     def _build_system_prompt(self, context: str) -> str:

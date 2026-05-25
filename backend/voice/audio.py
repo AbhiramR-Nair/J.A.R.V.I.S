@@ -11,12 +11,59 @@ Threading model:
 
 import threading
 import wave
+from collections.abc import Callable
 from io import BytesIO
 from typing import Optional
 
 import numpy as np
 import sounddevice as sd
 from loguru import logger
+
+
+class AudioCaptureError(Exception):
+    """Raised when the audio device cannot be opened or fails mid-recording.
+
+    User-facing message is safe to display directly — callers should not
+    wrap this in a generic "internal error" response.
+    """
+
+
+# Maps substrings found in PortAudio error messages to user-readable hints.
+# Checked case-insensitively; first match wins. Extend here when new variants
+# are found in the wild rather than touching call sites.
+_PORTAUDIO_ERROR_HINTS: dict[str, str] = {
+    # MME error 1 = MMSYSERR_ERROR: Windows returns this when the privacy
+    # setting blocks microphone access. Must be checked before the broader
+    # "unanticipated host error" entry because both share that prefix.
+    "mme error 1": (
+        "Microphone access denied. "
+        "Open Windows Settings → Privacy → Microphone and allow access."
+    ),
+    # MME error 2 = MMSYSERR_ALLOCATED: device is held by another process.
+    "unanticipated host error": (
+        "Microphone is in use by another application. "
+        "Close other audio apps and try again."
+    ),
+    "device unavailable": (
+        "Microphone unavailable — try reconnecting your headset."
+    ),
+    "access is denied": (
+        "Microphone access denied. "
+        "Open Windows Settings → Privacy → Microphone and allow access."
+    ),
+}
+_PORTAUDIO_FALLBACK = "Microphone unavailable — check connections and try again."
+
+
+def _classify_portaudio_error(exc: sd.PortAudioError) -> str:
+    """Return a user-facing message for a PortAudio open failure."""
+    raw = str(exc)
+    logger.debug(f"portaudio error raw string: {raw!r}")
+    msg = raw.lower()
+    for keyword, hint in _PORTAUDIO_ERROR_HINTS.items():
+        if keyword in msg:
+            return hint
+    return _PORTAUDIO_FALLBACK
 
 
 class AudioRecorder:
@@ -39,6 +86,7 @@ class AudioRecorder:
         dtype: str,
         device_index: Optional[int],
         max_seconds: int,
+        notify_cap_hit: Optional[Callable[[], None]] = None,
     ) -> None:
         self._sample_rate = sample_rate
         self._channels = channels
@@ -46,6 +94,10 @@ class AudioRecorder:
         self._device_index = device_index
         self._max_seconds = max_seconds
         self._max_frames = max_seconds * sample_rate
+        # Called (once) when the 30s cap fires. Must be thread-safe — the callback
+        # runs on a PortAudio OS thread, not the asyncio loop. The caller is
+        # responsible for using loop.call_soon_threadsafe inside the callable.
+        self._notify_cap_hit = notify_cap_hit
 
         # Buffer accumulates numpy chunks from the callback; joined at stop.
         # list-of-arrays avoids O(n²) repeated np.concatenate inside the callback.
@@ -53,6 +105,8 @@ class AudioRecorder:
         self._lock = threading.Lock()
         self._stream: Optional[sd.InputStream] = None
         self._recording = False
+        self._cap_notified = False      # prevents the cap callable firing more than once
+        self._callback_error: Optional[Exception] = None  # set by callback on hardware fault
 
         device_label = f"index={device_index}" if device_index is not None else "default"
         logger.info(
@@ -73,6 +127,8 @@ class AudioRecorder:
                 return
 
             self._buffer.clear()
+            self._cap_notified = False
+            self._callback_error = None
 
             try:
                 # blocksize drives how many frames arrive per callback invocation.
@@ -91,9 +147,11 @@ class AudioRecorder:
                 self._recording = True
                 logger.info("audio recorder: stream opened")
             except sd.PortAudioError as exc:
-                # Common causes: mic permission denied, device unplugged, wrong index.
-                logger.error(f"audio recorder: failed to open stream — {exc}")
                 self._stream = None
+                # Raise so the orchestrator can show the user a clear error and
+                # attempt recovery, instead of silently transitioning to LISTENING
+                # with no active stream.
+                raise AudioCaptureError(_classify_portaudio_error(exc)) from exc
 
     def stop_recording(self) -> bytes:
         """
@@ -115,6 +173,16 @@ class AudioRecorder:
             finally:
                 self._stream = None
 
+            # Surface any exception the callback thread stored mid-recording.
+            # This is the only safe place to raise it — the callback can't raise
+            # directly (sounddevice would just disable the stream silently).
+            if self._callback_error is not None:
+                err = self._callback_error
+                self._callback_error = None
+                raise AudioCaptureError(
+                    "Microphone disconnected — please reconnect and try again"
+                ) from err
+
             if not self._buffer:
                 logger.warning("audio recorder: buffer is empty — returning b''")
                 return b""
@@ -132,6 +200,35 @@ class AudioRecorder:
     @property
     def is_recording(self) -> bool:
         return self._recording
+
+    @classmethod
+    def test_open(
+        cls,
+        device_index: Optional[int],
+        sample_rate: int,
+        channels: int,
+        dtype: str,
+    ) -> None:
+        """Try opening an InputStream against *device_index* and close it immediately.
+
+        Called before swapping the active recorder so the old one stays live
+        until we know the new device actually works. Raises AudioCaptureError
+        if PortAudio rejects the open (device in use, permission denied, etc.).
+        """
+        try:
+            blocksize = int(sample_rate * 50 / 1000)
+            stream = sd.InputStream(
+                samplerate=sample_rate,
+                channels=channels,
+                dtype=dtype,
+                device=device_index,
+                blocksize=blocksize,
+            )
+            stream.start()
+            stream.stop()
+            stream.close()
+        except sd.PortAudioError as exc:
+            raise AudioCaptureError(_classify_portaudio_error(exc)) from exc
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -171,11 +268,18 @@ class AudioRecorder:
                         "auto-stopping. Release Alt+Space."
                     )
                     # Can't call stop_recording() here — it acquires the same lock.
-                    # Set the flag; the dispatcher's next stop_recording call will
-                    # find the full buffer and serialise it.
+                    # Set the flag; the orchestrator's on_recording_cap_hit will
+                    # drain the buffer and dispatch the turn.
                     self._recording = False
+                    # Notify the orchestrator exactly once via the thread-safe callable.
+                    if not self._cap_notified and self._notify_cap_hit is not None:
+                        self._cap_notified = True
+                        self._notify_cap_hit()
 
         except Exception as exc:
+            # Can't raise from the callback — sounddevice would disable the stream.
+            # Store it for stop_recording() to raise on the main/executor thread.
+            self._callback_error = exc
             logger.exception(f"audio recorder callback error: {exc}")
 
     def _to_wav(self, audio_data: np.ndarray) -> bytes:

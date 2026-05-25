@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 
 import { API_BASE } from "./api/config";
 import { ChatPanel, type ChatMessage } from "./components/ChatPanel";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { useVoiceEvents } from "./hooks/useWebSocket";
 import type { VoiceStateLiteral } from "./hooks/useWebSocket";
 
@@ -58,6 +59,10 @@ function App() {
       setMessages((prev) => [...prev, { role: "assistant", text: event.text }]);
     } else if (event.type === "speaking_failed") {
       setErrorToast(event.reason);
+    } else if (event.type === "recording_cap_hit") {
+      setErrorToast("Recording stopped at 30s limit.");
+    } else if (event.type === "audio_device_recovered") {
+      setErrorToast("Switched to default microphone.");
     }
 
     dispatch({ type: "event_consumed" });
@@ -169,6 +174,9 @@ function App() {
 
         {/* Chat history — user transcripts + assistant replies from Day 11 */}
         <ChatPanel messages={messages} />
+
+        {/* Settings panel — mic test for now; full settings drawer on Day 17 */}
+        <SettingsPanel />
       </div>
     </div>
   );

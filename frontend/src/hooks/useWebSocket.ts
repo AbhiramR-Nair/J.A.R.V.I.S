@@ -35,7 +35,10 @@ export type VoiceEvent =
   | { type: "assistant_message"; text: string; turn_id: string }
   | { type: "speaking_started"; turn_id: string }
   | { type: "speaking_ended"; turn_id: string }
-  | { type: "speaking_failed"; reason: string; turn_id: string };
+  | { type: "speaking_failed"; reason: string; turn_id: string }
+  // Day 12 — audio robustness events
+  | { type: "recording_cap_hit" }
+  | { type: "audio_device_recovered" };
 
 const MAX_QUEUE = 50;
 
