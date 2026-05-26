@@ -36,7 +36,7 @@ function App() {
     if (!event) return;
 
     if (event.type === "mute_toggle") {
-      setMuted((m) => !m);
+      // mute state is driven by state_changed events from the orchestrator
     } else if (event.type === "recording_saved") {
       const filename = event.path.split(/[\\/]/).pop() ?? event.path;
       console.log("recording saved:", event.path);

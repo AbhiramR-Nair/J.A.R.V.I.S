@@ -19,7 +19,7 @@ export function ChatPanel({ messages }: { messages: ChatMessage[] }) {
               ? // User bubbles: right-aligned, cyan tint
                 "self-end bg-cyan-600/40 text-cyan-100 font-mono text-xs px-3 py-2 rounded-2xl rounded-br-sm max-w-xs break-words"
               : // Assistant bubbles (Day 11): left-aligned, neutral tint
-                "self-start bg-white/10 text-white/80 font-mono text-xs px-3 py-2 rounded-2xl rounded-bl-sm max-w-xs break-words"
+                "self-start bg-cyan-900/50 text-cyan-100 font-mono text-xs px-3 py-2 rounded-2xl rounded-bl-sm max-w-xs break-words"
           }
         >
           {msg.text}
