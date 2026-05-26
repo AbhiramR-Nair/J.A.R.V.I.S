@@ -323,86 +323,87 @@ class ConversationOrchestrator:
         conversation_id = sqlite_store.get_or_create_session_conversation(project_id)
         turn_id = uuid.uuid4().hex[:12]
 
-        # ── STT ───────────────────────────────────────────────────────────
-        # STTService takes a Path, not bytes — save to disk first.
-        audio_path = await self._save_recording(wav_bytes)
-        try:
-            stt_result = await self._stt.transcribe(audio_path)
-        except STTError as exc:
+        with logger.contextualize(request_id=turn_id):
+            # ── STT ───────────────────────────────────────────────────────────
+            # STTService takes a Path, not bytes — save to disk first.
+            audio_path = await self._save_recording(wav_bytes)
+            try:
+                stt_result = await self._stt.transcribe(audio_path)
+            except STTError as exc:
+                async with self._lock:
+                    if self._state == VoiceState.MUTED:
+                        return
+                    await self._broadcast({"type": "transcription_failed", "error": str(exc)})
+                    await self._handle_error(str(exc))
+                return
+
             async with self._lock:
                 if self._state == VoiceState.MUTED:
                     return
-                await self._broadcast({"type": "transcription_failed", "error": str(exc)})
-                await self._handle_error(str(exc))
-            return
+                await self._broadcast({
+                    "type": "transcription_complete",
+                    "text": stt_result.text,
+                    "latency_ms": stt_result.latency_ms,
+                })
+                await self._transition(VoiceState.THINKING)
 
-        async with self._lock:
-            if self._state == VoiceState.MUTED:
+            # ── LLM ───────────────────────────────────────────────────────────
+            context = await self._build_context(project_id, stt_result.text)
+            system_prompt = self._build_system_prompt(context)
+            try:
+                llm_response = await self._llm.generate(stt_result.text, system_prompt=system_prompt)
+            except LLMError:
+                async with self._lock:
+                    if self._state == VoiceState.MUTED:
+                        return
+                    await self._handle_error("Couldn't get a response. Please try again.")
                 return
-            await self._broadcast({
-                "type": "transcription_complete",
-                "text": stt_result.text,
-                "latency_ms": stt_result.latency_ms,
-            })
-            await self._transition(VoiceState.THINKING)
 
-        # ── LLM ───────────────────────────────────────────────────────────
-        context = await self._build_context(project_id, stt_result.text)
-        system_prompt = self._build_system_prompt(context)
-        try:
-            llm_response = await self._llm.generate(stt_result.text, system_prompt=system_prompt)
-        except LLMError:
-            async with self._lock:
-                if self._state == VoiceState.MUTED:
-                    return
-                await self._handle_error("Couldn't get a response. Please try again.")
-            return
+            assistant_text = llm_response.text
 
-        assistant_text = llm_response.text
-
-        # ── Persist ───────────────────────────────────────────────────────
-        # SQLite is sync and fast for single-user; no executor needed here.
-        await self._persist_turn(
-            project_id=project_id,
-            conversation_id=conversation_id,
-            user_text=stt_result.text,
-            assistant_text=assistant_text,
-            provider=llm_response.provider,
-            model=llm_response.model,
-        )
-
-        # ── Broadcast + transition to SPEAKING ────────────────────────────
-        async with self._lock:
-            if self._state == VoiceState.MUTED:
-                return
-            await self._broadcast(
-                AssistantMessageEvent(text=assistant_text, turn_id=turn_id).model_dump()
+            # ── Persist ───────────────────────────────────────────────────────
+            # SQLite is sync and fast for single-user; no executor needed here.
+            await self._persist_turn(
+                project_id=project_id,
+                conversation_id=conversation_id,
+                user_text=stt_result.text,
+                assistant_text=assistant_text,
+                provider=llm_response.provider,
+                model=llm_response.model,
             )
-            await self._transition(VoiceState.SPEAKING)
 
-        # speaking_started is broadcast outside the lock — it's a notification, not a mutation.
-        await self._broadcast(SpeakingStartedEvent(turn_id=turn_id).model_dump())
-
-        # ── TTS ───────────────────────────────────────────────────────────
-        try:
-            await self._tts.speak(assistant_text)
-        except TTSError as exc:
+            # ── Broadcast + transition to SPEAKING ────────────────────────────
             async with self._lock:
                 if self._state == VoiceState.MUTED:
                     return
                 await self._broadcast(
-                    SpeakingFailedEvent(reason=str(exc), turn_id=turn_id).model_dump()
+                    AssistantMessageEvent(text=assistant_text, turn_id=turn_id).model_dump()
                 )
-                await self._handle_error(str(exc))
-            return
+                await self._transition(VoiceState.SPEAKING)
 
-        # ── Done ──────────────────────────────────────────────────────────
-        async with self._lock:
-            # Don't clobber MUTED if the user toggled mute while audio was playing.
-            if self._state == VoiceState.MUTED:
+            # speaking_started is broadcast outside the lock — it's a notification, not a mutation.
+            await self._broadcast(SpeakingStartedEvent(turn_id=turn_id).model_dump())
+
+            # ── TTS ───────────────────────────────────────────────────────────
+            try:
+                await self._tts.speak(assistant_text)
+            except TTSError as exc:
+                async with self._lock:
+                    if self._state == VoiceState.MUTED:
+                        return
+                    await self._broadcast(
+                        SpeakingFailedEvent(reason=str(exc), turn_id=turn_id).model_dump()
+                    )
+                    await self._handle_error(str(exc))
                 return
-            await self._broadcast(SpeakingEndedEvent(turn_id=turn_id).model_dump())
-            await self._transition(VoiceState.IDLE)
+
+            # ── Done ──────────────────────────────────────────────────────────
+            async with self._lock:
+                # Don't clobber MUTED if the user toggled mute while audio was playing.
+                if self._state == VoiceState.MUTED:
+                    return
+                await self._broadcast(SpeakingEndedEvent(turn_id=turn_id).model_dump())
+                await self._transition(VoiceState.IDLE)
 
     async def _save_recording(self, wav_bytes: bytes) -> Path:
         """Write WAV bytes to data/recordings/ and return the Path for STTService."""
