@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 
 import { API_BASE } from "./api/config";
+import { Blob } from "./blob/Blob";
 import { ChatPanel, type ChatMessage } from "./components/ChatPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { useVoiceEvents } from "./hooks/useWebSocket";
@@ -15,7 +16,6 @@ import type { VoiceStateLiteral } from "./hooks/useWebSocket";
 function App() {
   // Holds the /health result + the X-Request-ID we read off the response header.
   const [ping, setPing] = useState<string | null>(null);
-  const [muted, setMuted] = useState(false);
   // Briefly shows the saved filename after a recording completes; clears via separate effect.
   const [lastRecording, setLastRecording] = useState<string | null>(null);
   // Day 9: in-memory chat history; persisted to SQLite from Day 11 onward.
@@ -53,8 +53,6 @@ function App() {
     } else if (event.type === "state_changed") {
       // Orchestrator state drives the status label from Day 11 onward.
       setVoiceState(event.state);
-      if (event.state === "muted") setMuted(true);
-      if (event.prev_state === "muted" && event.state !== "muted") setMuted(false);
     } else if (event.type === "assistant_message") {
       setMessages((prev) => [...prev, { role: "assistant", text: event.text }]);
     } else if (event.type === "speaking_failed") {
@@ -95,12 +93,9 @@ function App() {
     }
   }
 
-  // Derive a human-readable status label. Prefer voiceState from the orchestrator
-  // (state_changed events); fall back to ad-hoc state for pre-Day-11 compatibility.
+  // Derive a human-readable status label from the orchestrator's voiceState.
   const statusLabel = voiceState !== "idle"
-    ? voiceState === "muted" ? "Muted" : voiceState
-    : muted
-    ? "Muted"
+    ? voiceState
     : transcribing
     ? "transcribing…"
     : lastRecording
@@ -135,11 +130,30 @@ function App() {
 
       {/* Main content area */}
       <div className="flex flex-col items-center justify-center flex-1 gap-4">
-        {/* Temporary test shape — visible proof the transparent window is working.
-            Delete this on Day 15 when the real blob component lands. */}
-        <div className="w-24 h-24 rounded-full bg-cyan-400/50" />
+        {/* Animated orb — visual face of the assistant */}
+        <Blob voiceState={voiceState} size={180} />
 
-        {/* Status badge — shows current voice state driven by hotkey events */}
+        {/* Dev-only state cycler: force any voice state without triggering the backend.
+            Removed on Day 17 polish. Only renders when Vite's DEV flag is true. */}
+        {import.meta.env.DEV && (
+          <div className="flex gap-1 flex-wrap justify-center">
+            {(["idle", "listening", "thinking", "speaking", "muted", "error"] as VoiceStateLiteral[]).map((s) => (
+              <button
+                key={s}
+                onClick={() => setVoiceState(s)}
+                className={`font-mono text-xs px-2 py-1 rounded border transition-colors ${
+                  voiceState === s
+                    ? "bg-cyan-600/60 border-cyan-400 text-cyan-100"
+                    : "bg-black/30 border-white/10 text-white/50 hover:text-white/80 hover:border-white/30"
+                }`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Status badge — debug aid while blob is new; demoted/removed on Day 17 */}
         <div className="bg-black/30 backdrop-blur-sm rounded-lg px-4 py-2 text-cyan-300 font-mono text-sm">
           Status: {statusLabel}
         </div>
