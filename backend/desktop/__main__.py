@@ -14,12 +14,15 @@ Make sure the Vite dev server is running first:
 import threading
 import time
 import tkinter
+from pathlib import Path
 
 import uvicorn
 import webview
 from loguru import logger
 
 from backend.config.settings import get_settings
+from backend.desktop.snap import SnapManager
+from backend.desktop.tray import TrayManager, set_instance as set_tray
 
 
 def _screen_size() -> tuple[int, int]:
@@ -68,7 +71,7 @@ def main() -> None:
     # transparent=True + background_color="#000000" gives a fully see-through window.
     # easy_drag=True lets the user click-and-drag anywhere to move it.
     # on_top=True keeps the window above all other windows.
-    webview.create_window(
+    window = webview.create_window(
         title="J.A.R.V.I.S",
         url=settings.frontend_dev_url,
         width=400,
@@ -82,6 +85,31 @@ def main() -> None:
         easy_drag=True,
         shadow=False,
     )
+
+    # Snap-to-corner: subscribe before webview.start() so events are wired
+    # before the window is visible. restore_position runs once on shown.
+    snap_manager = SnapManager(
+        window=window,
+        screen_w=screen_w,
+        screen_h=screen_h,
+        state_path=Path("data/window_state.json"),
+    )
+    window.events.moved += snap_manager.on_moved
+    window.events.shown += snap_manager.restore_position
+
+    # System tray: start on a daemon thread before webview.start() blocks.
+    # on_quit destroys the PyWebView window, which unblocks webview.start()
+    # and lets the process exit cleanly (backend thread is daemon so it dies too).
+    tray = TrayManager(
+        window=window,
+        icon_path=Path("assets/tray_icon.png"),
+        on_quit=window.destroy,
+    )
+    # Register in the tray module's singleton so /window/hide can reach it.
+    # Cannot store here as a module global because this file runs as sys.modules['__main__'],
+    # not sys.modules['backend.desktop.__main__'] — cross-module imports would see None.
+    set_tray(tray)
+    tray.start()
 
     # webview.start() blocks until the window is closed.
     webview.start(debug=True)
