@@ -1,16 +1,24 @@
 import { Settings, X } from "lucide-react";
 
+import type { ConnectionState } from "../hooks/useWebSocket";
+
+const DOT_COLORS: Record<ConnectionState, string> = {
+  connecting:   "#EF9F27",  // amber — treat pre-connect the same as reconnecting
+  connected:    "#7CD4E8",  // cyan
+  reconnecting: "#EF9F27",  // amber
+  disconnected: "#E24B4A",  // red
+};
+
 interface HeaderBandProps {
   onToggleSettings: () => void;
   onClose: () => void;
-  /** Dot color reflecting connection state. Forward-prepared; defaults to cyan today. */
-  statusDotColor?: string;
+  connectionState: ConnectionState;
 }
 
 export function HeaderBand({
   onToggleSettings,
   onClose,
-  statusDotColor = "#7CD4E8",
+  connectionState,
 }: HeaderBandProps) {
   // The entire band is a native drag handle via WebkitAppRegion.
   // Buttons override with "no-drag" so their click events aren't swallowed.
@@ -31,7 +39,8 @@ export function HeaderBand({
       {/* Left: status dot + identity string */}
       <div className="flex items-center gap-2">
         <div
-          style={{ width: 6, height: 6, borderRadius: "50%", background: statusDotColor }}
+          className={connectionState === "reconnecting" ? "dot-reconnecting" : ""}
+          style={{ width: 6, height: 6, borderRadius: "50%", background: DOT_COLORS[connectionState] }}
         />
         <span
           style={{ color: "#7CD4E8", letterSpacing: "0.18em", fontSize: 11 }}

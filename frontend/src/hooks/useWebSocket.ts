@@ -4,10 +4,15 @@
 //         back-to-back events from the state machine (state_changed + assistant_message
 //         arriving 50ms apart) are never silently dropped.
 
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import type { Dispatch } from "react";
 
 import { WS_VOICE_URL } from "../api/config";
+
+export type ConnectionState = "connecting" | "connected" | "reconnecting" | "disconnected";
+
+// How many consecutive WS close events before we escalate from amber → red.
+const DISCONNECTED_THRESHOLD = 5;
 
 // Mirrors VoiceStateLiteral in backend/models/voice.py. Keep in sync.
 export type VoiceStateLiteral =
@@ -73,6 +78,7 @@ export interface VoiceEventsHook {
   // Side channel for amplitude — read each frame by Blob's rAF loop.
   // { current: number } rather than MutableRefObject (deprecated in React 19).
   amplitudeRef: { current: number };
+  connectionState: ConnectionState;
 }
 
 // Returns the full event queue and the dispatch function.
@@ -81,9 +87,13 @@ export interface VoiceEventsHook {
 // regardless of how quickly the backend sends them.
 export function useVoiceEvents(): VoiceEventsHook {
   const [events, dispatch] = useReducer(queueReducer, []);
+  const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   // Amplitude side channel: written by onmessage, read by Blob's rAF loop each frame.
   // Never goes through the reducer queue — see onmessage handler below for the rationale.
   const amplitudeRef = useRef(0);
+  // Retry counter: incremented on each close, reset to 0 on successful open.
+  // Not state because it drives no render — only connectionState renders.
+  const retryCountRef = useRef(0);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -94,6 +104,11 @@ export function useVoiceEvents(): VoiceEventsHook {
     function connect() {
       if (cancelled) return;
       ws = new WebSocket(WS_VOICE_URL);
+
+      ws.onopen = () => {
+        retryCountRef.current = 0;
+        setConnectionState("connected");
+      };
 
       ws.onmessage = (e) => {
         try {
@@ -118,6 +133,14 @@ export function useVoiceEvents(): VoiceEventsHook {
         amplitudeRef.current = 0;
         // Clear stale events on disconnect so they don't replay after reconnect.
         dispatch({ type: "clear" });
+        retryCountRef.current += 1;
+        // Escalate from amber (reconnecting) to red (disconnected) after 5 failures.
+        // Counter resets on the next successful onopen so a recovery returns to cyan.
+        if (retryCountRef.current >= DISCONNECTED_THRESHOLD) {
+          setConnectionState("disconnected");
+        } else {
+          setConnectionState("reconnecting");
+        }
         if (!cancelled) {
           retryTimer = setTimeout(connect, 1000);
         }
@@ -133,5 +156,5 @@ export function useVoiceEvents(): VoiceEventsHook {
     };
   }, []);
 
-  return { events, dispatch, amplitudeRef };
+  return { events, dispatch, amplitudeRef, connectionState };
 }

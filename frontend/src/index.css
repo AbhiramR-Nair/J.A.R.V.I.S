@@ -22,3 +22,12 @@ body {
   height: 100%;
   overflow: hidden;
 }
+
+/* Amber pulse on the header dot while WebSocket is reconnecting */
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.25; }
+}
+.dot-reconnecting {
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}

@@ -20,7 +20,7 @@ function App() {
   // Controls the settings panel; toggled by the gear icon in HeaderBand.
   const [settingsOpen, setSettingsOpen] = useState(false);
   // useVoiceEvents returns a FIFO queue + dispatch. Consume events[0] one at a time.
-  const { events, dispatch, amplitudeRef } = useVoiceEvents();
+  const { events, dispatch, amplitudeRef, connectionState } = useVoiceEvents();
 
   // Process the head of the event queue. Dispatches event_consumed at the end so
   // the next event becomes events[0] and triggers another run of this effect.
@@ -73,14 +73,16 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [settingsOpen]);
 
-  // Tells the backend to exit, which kills the whole process cleanly.
+  // Hides the window into the system tray. Backend + hotkey listener keep running.
+  // Real quit is only available via the tray menu's Quit item.
   async function closeApp() {
-    await fetch(`${API_BASE}/shutdown`, { method: "POST" }).catch(() => {});
+    await fetch(`${API_BASE}/window/hide`, { method: "POST" }).catch(() => {});
   }
 
   return (
     <div className="flex flex-col h-screen relative bg-[#060d14]">
       <HeaderBand
+        connectionState={connectionState}
         onToggleSettings={() => setSettingsOpen((s) => !s)}
         onClose={closeApp}
       />

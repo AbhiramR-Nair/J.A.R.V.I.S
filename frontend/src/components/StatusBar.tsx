@@ -39,6 +39,18 @@ export function StatusBar({ voiceState, amplitudeRef }: StatusBarProps) {
     let rafId: number;
 
     function tick() {
+      // Skip per-frame bar writes when there's nothing animating.
+      // amplitudeRef hits 0 the moment App.tsx leaves listening/speaking,
+      // so this guard fires immediately when audio goes quiet.
+      if (
+        amplitudeRef.current === 0 &&
+        voiceStateRef.current !== "listening" &&
+        voiceStateRef.current !== "speaking"
+      ) {
+        rafId = requestAnimationFrame(tick);
+        return;
+      }
+
       const amp = amplitudeRef.current;
       const isAudioActive =
         voiceStateRef.current === "listening" ||
