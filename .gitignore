@@ -9,11 +9,8 @@ env/
 # Secrets
 .env
 
-# Runtime data (regenerated locally)
-data/jarvis.db
-data/chroma/
-data/recordings/
-data/logs/
+# Runtime data (regenerated locally — entire directory is ephemeral)
+data/
 
 # Downloaded binaries / models
 piper/
@@ -24,6 +21,9 @@ wake_word_models/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+
+# Claude Code — local settings are machine-specific, skill files are committed
+.claude/settings.local.json
 
 # OS / editor
 .DS_Store
