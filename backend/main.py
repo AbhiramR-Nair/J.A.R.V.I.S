@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from backend.api import audio, chat, debug, health, memory, voice
+from backend.api import audio, chat, debug, health, memory, projects, voice
 from backend.api.voice import manager as ws_manager
 from backend.config.logging import configure_logging, request_id_var
 from backend.config.runtime_settings import get_input_device
@@ -208,4 +208,5 @@ app.include_router(chat.router)
 app.include_router(memory.router)
 app.include_router(voice.router)
 app.include_router(audio.router)
+app.include_router(projects.router)
 app.include_router(debug.router)
