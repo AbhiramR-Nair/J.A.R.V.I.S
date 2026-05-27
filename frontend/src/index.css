@@ -2,13 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
-/* PyWebView transparent window — body and root must have no background */
+/* PyWebView window: body/html stay transparent so the OS chrome doesn't flash.
+   The React root gets the dark background so there's no white gap before mount. */
 html,
-body,
-#root {
+body {
   margin: 0;
   padding: 0;
   background: transparent;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+#root {
+  margin: 0;
+  padding: 0;
+  background: #060d14;
   width: 100%;
   height: 100%;
   overflow: hidden;

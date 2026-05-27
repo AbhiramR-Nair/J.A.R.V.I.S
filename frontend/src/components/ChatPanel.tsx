@@ -1,30 +1,59 @@
-// Chat message list — grows across days:
-//   Day 9:  user transcript bubbles (this file)
-//   Day 11: assistant response bubbles added
-//   Day 23: PDF-summary cards added
+import { MessageSquare } from "lucide-react";
+
+import { HudFrame } from "./HudFrame";
 
 export type ChatMessage = { role: "user" | "assistant"; text: string };
+
+// Display cap — full history lives in App.tsx state; only the tail is rendered.
+const DISPLAY_LIMIT = 5;
 
 export function ChatPanel({ messages }: { messages: ChatMessage[] }) {
   if (messages.length === 0) return null;
 
+  const visible = messages.slice(-DISPLAY_LIMIT);
+
   return (
-    // Scrollable message list, anchored to the bottom as new messages arrive.
-    <ul className="flex flex-col gap-2 w-full max-w-sm max-h-48 overflow-y-auto px-1">
-      {messages.map((msg, i) => (
-        <li
-          key={i}
-          className={
-            msg.role === "user"
-              ? // User bubbles: right-aligned, cyan tint
-                "self-end bg-cyan-600/40 text-cyan-100 font-mono text-xs px-3 py-2 rounded-2xl rounded-br-sm max-w-xs break-words"
-              : // Assistant bubbles (Day 11): left-aligned, neutral tint
-                "self-start bg-cyan-900/50 text-cyan-100 font-mono text-xs px-3 py-2 rounded-2xl rounded-bl-sm max-w-xs break-words"
-          }
+    <HudFrame className="w-full max-w-sm">
+      {/* Header row: icon + label + count */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5">
+          <MessageSquare size={10} style={{ color: "rgba(124,212,232,0.5)" }} />
+          <span
+            style={{ letterSpacing: "0.18em", fontSize: 10, color: "rgba(124,212,232,0.7)" }}
+            className="font-mono uppercase"
+          >
+            Chat
+          </span>
+        </div>
+        <span
+          style={{ letterSpacing: "0.10em", fontSize: 9, color: "rgba(124,212,232,0.35)" }}
+          className="font-mono"
         >
-          {msg.text}
-        </li>
-      ))}
-    </ul>
+          [{visible.length} RECENT]
+        </span>
+      </div>
+
+      {/* Message list — prefix characters read as ornamentation, not content */}
+      <ul className="flex flex-col gap-1 max-h-36 overflow-y-auto">
+        {visible.map((msg, i) => (
+          <li key={i} className="flex gap-1.5 font-mono" style={{ fontSize: 10 }}>
+            {/* Prefix: dim so it doesn't compete with the message text */}
+            <span style={{ color: "rgba(124,212,232,0.3)", flexShrink: 0 }}>
+              {msg.role === "user" ? ">" : "<"}
+            </span>
+            <span
+              style={{
+                color: msg.role === "user"
+                  ? "rgba(124,212,232,0.65)"   // user: slightly muted
+                  : "rgba(200,230,240,0.85)",  // assistant: more prominent
+                wordBreak: "break-word",
+              }}
+            >
+              {msg.text}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </HudFrame>
   );
 }
