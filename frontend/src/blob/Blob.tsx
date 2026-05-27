@@ -18,10 +18,11 @@ import type { BlobStateConfig } from "./BlobStates";
 
 interface BlobProps {
   voiceState: VoiceStateLiteral;
-  size?: number;  // diameter in px; default 180
+  size?: number;              // diameter in px; default 180
+  amplitudeRef: { current: number };  // side-channel from useVoiceEvents; read each rAF frame
 }
 
-export function Blob({ voiceState, size = 180 }: BlobProps) {
+export function Blob({ voiceState, size = 180, amplitudeRef }: BlobProps) {
   // --- DOM refs: the rAF loop writes directly to these elements ---
   const wrapperRef   = useRef<HTMLDivElement>(null);
   const conicRef     = useRef<HTMLDivElement>(null);
@@ -35,6 +36,10 @@ export function Blob({ voiceState, size = 180 }: BlobProps) {
   // Current config for the rAF loop. Updated on state change so the loop
   // always uses fresh morph/speed params without needing them in its deps.
   const configRef = useRef<BlobStateConfig>(BLOB_STATES.idle);
+
+  // EMA-smoothed amplitude — persists across frames so decay works across ticks.
+  // Asymmetric k: 0.35 attack (responsive) vs 0.12 decay (settles over ~0.5s).
+  const smoothedAmpRef = useRef(0);
 
   // --- Motion values: Framer Motion lerps these; rAF reads .get() each frame ---
   const idle = BLOB_STATES.idle;
@@ -109,6 +114,25 @@ export function Blob({ voiceState, size = 180 }: BlobProps) {
       frame++;
       const cfg = configRef.current;
 
+      // --- Amplitude EMA smoothing ---
+      // Asymmetric k: faster attack so the orb feels responsive to sound;
+      // slower decay so syllable gaps don't strobe. Runs every frame before
+      // any element writes so all layers read the same smoothed value.
+      const rawAmp = amplitudeRef.current;
+      const k = rawAmp > smoothedAmpRef.current ? 0.35 : 0.12;
+      smoothedAmpRef.current += (rawAmp - smoothedAmpRef.current) * k;
+      const amp = smoothedAmpRef.current;
+      const audio = cfg.audio;
+
+      // Pre-compute multipliers once per frame — each is 1.0 when amp is 0
+      // (all-zero coefficients in non-reactive states guarantee no effect).
+      const pulseScale     = 1 + amp * audio.pulseK;
+      const conicSpeedMult = 1 + amp * audio.conicSpeedK;
+      const conicSat       = 1 + amp * audio.conicSaturateK;
+      const radialBright   = 1 + amp * audio.colorAlphaK;
+      const specSizePct    = 35 * (1 + amp * audio.highlightSizeK);
+      const specAlpha      = Math.min(mvHighlightOp.get() + amp * audio.highlightAlphaK, 1);
+
       // --- Border-radius morphing ---
       // Must use the full 8-value form (A% B% C% D% / E% F% G% H%) — browsers
       // cannot interpolate between mixed or 4-value forms smoothly.
@@ -127,19 +151,28 @@ export function Blob({ voiceState, size = 180 }: BlobProps) {
       ].map(n => `${Math.max(30, Math.min(70, n)).toFixed(1)}%`);
 
       if (wrapperRef.current) {
-        wrapperRef.current.style.borderRadius =
-          `${v[0]} ${v[1]} ${v[2]} ${v[3]} / ${v[4]} ${v[5]} ${v[6]} ${v[7]}`;
-        wrapperRef.current.style.transform = `scale(${mvScale.get().toFixed(3)})`;
-        wrapperRef.current.style.opacity   = mvOpacity.get().toFixed(3);
+        // One cssText write per frame instead of three separate property writes.
+        // Static layout props included here because cssText replaces the entire
+        // inline style attribute — if they lived in the JSX style prop they'd be wiped.
+        // size is captured at mount; stable since the prop is always 180.
+        wrapperRef.current.style.cssText =
+          `width:${size}px;height:${size}px;position:relative;overflow:hidden;` +
+          `flex-shrink:0;-webkit-app-region:no-drag;` +
+          `border-radius:${v[0]} ${v[1]} ${v[2]} ${v[3]} / ${v[4]} ${v[5]} ${v[6]} ${v[7]};` +
+          `transform:scale(${(mvScale.get() * pulseScale).toFixed(3)});opacity:${mvOpacity.get().toFixed(3)}`;
       }
 
       // --- Conic gradient layer ---
-      conicAngleRef.current += cfg.conicSpeed;
+      conicAngleRef.current += cfg.conicSpeed * conicSpeedMult;
       if (conicRef.current) {
         const stops = [mvC0, mvC1, mvC2, mvC3, mvC4, mvC5].map(m => m.get()).join(", ");
-        conicRef.current.style.background =
-          `conic-gradient(from ${conicAngleRef.current.toFixed(1)}deg, ${stops}, ${mvC0.get()})`;
-        conicRef.current.style.filter = `blur(${mvConicBlur.get().toFixed(1)}px)`;
+        // One cssText write: static layout (position, inset, border-radius, pointer-events)
+        // + dynamic visual (background, filter). inset:-30px overflows the clip boundary
+        // to hide blurred edges. Both writes were separate before; now one recalculation.
+        conicRef.current.style.cssText =
+          `position:absolute;inset:-30px;border-radius:50%;pointer-events:none;` +
+          `background:conic-gradient(from ${conicAngleRef.current.toFixed(1)}deg,${stops},${mvC0.get()});` +
+          `filter:blur(${mvConicBlur.get().toFixed(1)}px) saturate(${conicSat.toFixed(2)})`;
       }
 
       // --- Radial gradient layer (three watercolor regions) ---
@@ -149,6 +182,8 @@ export function Blob({ voiceState, size = 180 }: BlobProps) {
           `radial-gradient(circle at 70% 60%, ${mvR1.get()} 0%, transparent 55%)`,
           `radial-gradient(circle at 50% 80%, ${mvR2.get()} 0%, transparent 50%)`,
         ].join(", ");
+        // brightness() boosts the screen-blended colour wash with amplitude.
+        radialRef.current.style.filter = `brightness(${radialBright.toFixed(2)})`;
       }
 
       // --- Specular highlight (Lissajous drift) ---
@@ -160,7 +195,7 @@ export function Blob({ voiceState, size = 180 }: BlobProps) {
       if (highlightRef.current) {
         highlightRef.current.style.background =
           `radial-gradient(circle at ${hx}% ${hy}%, ` +
-          `rgba(255,255,255,${mvHighlightOp.get().toFixed(2)}) 0%, transparent 35%)`;
+          `rgba(255,255,255,${specAlpha.toFixed(2)}) 0%, transparent ${specSizePct.toFixed(1)}%)`;
       }
 
       // --- Grain opacity ---
@@ -179,28 +214,12 @@ export function Blob({ voiceState, size = 180 }: BlobProps) {
   return (
     // Outer wrapper: clipping boundary for all layers. border-radius written by rAF.
     // WebkitAppRegion no-drag: leaves room for a future tap-to-mute gesture (Day 17).
-    <div
-      ref={wrapperRef}
-      style={{
-        width: size,
-        height: size,
-        position: "relative",
-        overflow: "hidden",
-        flexShrink: 0,
-        borderRadius: "50%",  // initial value; overwritten by rAF on first frame
-        WebkitAppRegion: "no-drag",
-      } as React.CSSProperties}
-    >
+    // rAF owns all inline styles on this element via cssText (see rAF loop below).
+    // Removing the style prop prevents React from fighting the rAF over the style attribute.
+    <div ref={wrapperRef}>
       {/* Layer 1 (back): rotating conic gradient — the main color wash */}
-      <div
-        ref={conicRef}
-        style={{
-          position: "absolute",
-          inset: -30,       // oversized so the blurred edge doesn't show a hard clip
-          borderRadius: "50%",
-          pointerEvents: "none",
-        }}
-      />
+      {/* rAF owns all inline styles on this element via cssText (see rAF loop below). */}
+      <div ref={conicRef} />
 
       {/* Layer 2: radial color regions — watercolor depth and warmth */}
       <div

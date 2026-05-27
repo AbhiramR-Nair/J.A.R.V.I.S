@@ -40,15 +40,78 @@ class TTSError(Exception):
     """
 
 
-def _play_sync(array: np.ndarray, sample_rate: int, device: int | None) -> None:
-    """Blocking sounddevice playback. Must be called from an executor.
+def _make_callback(audio: np.ndarray, service: "TTSService"):
+    """Factory for the OutputStream pull callback.
 
-    sd.play() is non-blocking by default — it returns immediately while audio
-    plays on a PortAudio thread. sd.wait() blocks until playback is done.
-    Together they give us synchronous completion semantics in a thread.
+    Returns a closure that fills outdata chunk-by-chunk from audio, computes
+    per-chunk RMS amplitude, and writes it to service._latest_amplitude.
+    Raises sd.CallbackStop when the array is exhausted.
     """
-    sd.play(array, samplerate=sample_rate, device=device)
-    sd.wait()
+    cursor = 0
+
+    def _cb(outdata: np.ndarray, frames: int, time_info, status) -> None:
+        nonlocal cursor
+        remaining = len(audio) - cursor
+
+        # Guard against a spurious extra callback after CallbackStop (PortAudio impl detail).
+        if remaining <= 0:
+            outdata[:] = 0
+            raise sd.CallbackStop
+
+        n = min(frames, remaining)
+        chunk = audio[cursor : cursor + n]
+
+        # outdata shape is (frames, 1) for mono — fill the channel column.
+        outdata[:n, 0] = chunk
+        if n < frames:
+            outdata[n:] = 0  # zero-pad the tail of the last partial chunk
+
+        cursor += n
+
+        # Normalize int16 → [-1, 1] float before RMS so tts_calibration_max
+        # lives in the same [0, 1] domain as mic_calibration_max.
+        rms = float(np.sqrt(np.mean((chunk.astype(np.float32) / 32768.0) ** 2)))
+        service._latest_amplitude = min(rms / service._tts_calibration_max, 1.0)
+
+        if cursor >= len(audio):
+            raise sd.CallbackStop
+
+    return _cb
+
+
+def _play_with_amplitude(
+    audio: np.ndarray,
+    sample_rate: int,
+    device: int | None,
+    service: "TTSService",
+) -> None:
+    """Blocking OutputStream playback with per-chunk amplitude tracking.
+
+    Replaces _play_sync. Must be called from an executor (this function blocks).
+    Stores the active stream on service._active_stream so cancel_playback() can
+    abort it from the asyncio thread. The finally block guarantees cleanup
+    whether playback completes normally, is aborted, or raises.
+    """
+    # blocksize ~50ms matches the mic callback rate; gives amplitude at ~20Hz.
+    blocksize = int(sample_rate * 0.05)
+    callback = _make_callback(audio, service)
+
+    try:
+        with sd.OutputStream(
+            samplerate=sample_rate,
+            channels=1,
+            dtype="int16",
+            device=device,
+            blocksize=blocksize,
+            callback=callback,
+        ) as stream:
+            service._active_stream = stream
+            while stream.active:
+                sd.sleep(20)  # poll every 20ms; fine in an executor thread
+    finally:
+        # Runs on normal completion AND on abort from cancel_playback().
+        service._active_stream = None
+        service._latest_amplitude = 0.0
 
 
 class TTSService:
@@ -65,7 +128,24 @@ class TTSService:
         self._sample_rate = settings.tts_sample_rate
         self._output_device = settings.tts_output_device
         self._timeout = settings.tts_timeout_seconds
+        # Calibration max for RMS normalization (same domain as mic: normalized float).
+        self._tts_calibration_max = settings.tts_calibration_max
+        # Latest per-chunk RMS amplitude [0.0, 1.0]. Written by OutputStream callback
+        # (executor thread); read by broadcast task (asyncio thread). GIL-atomic.
+        self._latest_amplitude: float = 0.0
+        # Active OutputStream while speak() is playing. Set in _play_with_amplitude
+        # before the polling loop; cleared in its finally block. None when idle.
+        self._active_stream: sd.OutputStream | None = None
         logger.info("tts service initialised: voice={}", settings.piper_voice_path.name)
+
+    @property
+    def latest_amplitude(self) -> float:
+        """Most recent per-chunk RMS amplitude during TTS playback, normalized to [0.0, 1.0].
+
+        Updated ~every 50ms while playing (OutputStream blocksize).
+        Returns 0.0 when not playing. Safe to read from any thread (GIL-atomic float).
+        """
+        return self._latest_amplitude
 
     async def synthesize(self, text: str) -> tuple[np.ndarray, SynthesisResult]:
         """Run Piper as a subprocess and return raw PCM as a numpy int16 array.
@@ -159,9 +239,11 @@ class TTSService:
 
         loop = asyncio.get_running_loop()
         try:
-            # run_in_executor runs the blocking play+wait in a thread pool thread.
+            # _play_with_amplitude blocks in the executor while the OutputStream plays.
+            # It updates self._latest_amplitude per chunk and self._active_stream so
+            # cancel_playback() can abort it mid-play.
             await loop.run_in_executor(
-                None, _play_sync, array, self._sample_rate, self._output_device
+                None, _play_with_amplitude, array, self._sample_rate, self._output_device, self
             )
         except Exception as exc:
             logger.warning("sounddevice playback error: {}", exc)
@@ -172,13 +254,17 @@ class TTSService:
     async def cancel_playback(self) -> None:
         """Stop any in-flight TTS playback immediately. Safe to call when nothing plays.
 
-        sd.stop() is global to the sounddevice module — it stops all active streams,
-        not just TTS. Fine in v1 (only TTS uses sd.play); revisit if mic monitoring
-        ever uses sd.play concurrently. Runs in executor because sd.stop() is a
-        blocking PortAudio call.
+        Aborts the explicit OutputStream stored in _active_stream. abort() discards
+        buffered audio and returns immediately — faster than stop() which drains first.
+        The _play_with_amplitude finally block then clears _active_stream and resets
+        _latest_amplitude; we also zero it here in case that finally runs after a brief
+        delay on the executor thread.
         """
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, sd.stop)
+        stream = self._active_stream
+        if stream is not None and stream.active:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, stream.abort)
+        self._latest_amplitude = 0.0
 
     async def close(self) -> None:
         """No-op today — Piper has no persistent process to clean up.

@@ -19,6 +19,8 @@ import numpy as np
 import sounddevice as sd
 from loguru import logger
 
+from backend.config.settings import get_settings
+
 
 class AudioCaptureError(Exception):
     """Raised when the audio device cannot be opened or fails mid-recording.
@@ -94,6 +96,13 @@ class AudioRecorder:
         self._device_index = device_index
         self._max_seconds = max_seconds
         self._max_frames = max_seconds * sample_rate
+        # Calibration max read once at construction (cached singleton — no file I/O).
+        # Stored as an instance field so the callback never touches the settings module.
+        self._mic_calibration_max = get_settings().mic_calibration_max
+        # Latest per-chunk RMS amplitude, normalized to [0.0, 1.0].
+        # Written by the callback (OS thread), read by the broadcast task (asyncio thread).
+        # Plain float assignment is atomic in CPython under the GIL — no lock needed for reads.
+        self._latest_amplitude: float = 0.0
         # Called (once) when the 30s cap fires. Must be thread-safe — the callback
         # runs on a PortAudio OS thread, not the asyncio loop. The caller is
         # responsible for using loop.call_soon_threadsafe inside the callable.
@@ -164,6 +173,9 @@ class AudioRecorder:
                 return b""
 
             self._recording = False
+            # Zero out amplitude immediately so the broadcast task doesn't read a stale
+            # value in the window between stream stop and task cancellation (T-3).
+            self._latest_amplitude = 0.0
 
             try:
                 self._stream.stop()
@@ -200,6 +212,16 @@ class AudioRecorder:
     @property
     def is_recording(self) -> bool:
         return self._recording
+
+    @property
+    def latest_amplitude(self) -> float:
+        """Most recent per-chunk RMS amplitude, normalized to [0.0, 1.0].
+
+        Updated ~every 50ms while recording (sounddevice blocksize).
+        Safe to read from any thread without a lock (CPython GIL, plain float).
+        Returns 0.0 when not recording.
+        """
+        return self._latest_amplitude
 
     @classmethod
     def test_open(
@@ -259,6 +281,11 @@ class AudioRecorder:
                 # indata shape is (frames, channels); copy() because the buffer
                 # backing indata is reused by sounddevice on the next callback.
                 self._buffer.append(indata.copy())
+
+                # Normalize int16 → [-1.0, 1.0] float before RMS so calibration_max
+                # lives in the same [0, 1] domain regardless of dtype.
+                rms = float(np.sqrt(np.mean((indata.astype(np.float32) / 32768.0) ** 2)))
+                self._latest_amplitude = min(rms / self._mic_calibration_max, 1.0)
 
                 # Max-duration guard: auto-stop if the user leaves PTT held too long.
                 total_frames = sum(len(chunk) for chunk in self._buffer)

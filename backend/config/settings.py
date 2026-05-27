@@ -88,6 +88,15 @@ class Settings(BaseSettings):
     tts_output_device: int | None = None
     tts_timeout_seconds: int = 30
 
+    # Amplitude broadcasting (Day 16)
+    # mic_calibration_max: RMS in normalized [-1, 1] float space that maps to amplitude 1.0.
+    # Normal laptop mic speech ≈ 0.05–0.12 RMS; 0.1 saturates at loud-but-normal volume.
+    # tts_calibration_max: Piper output runs hotter than mic; 0.3 keeps it in range.
+    # Tune these if the orb barely reacts (lower) or is always pinned at max (raise).
+    mic_calibration_max: float = 0.1
+    tts_calibration_max: float = 0.3
+    amplitude_broadcast_hz: int = 20     # how often the orchestrator broadcasts amplitude to the frontend
+
     # Conversation orchestrator (Day 11)
     error_recovery_seconds: int = 3      # how long ERROR state waits before auto-recovering to IDLE
     recent_messages_limit: int = 4       # last N messages used as recency context for LLM

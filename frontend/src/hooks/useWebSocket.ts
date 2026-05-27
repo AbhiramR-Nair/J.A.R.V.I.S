@@ -4,7 +4,7 @@
 //         back-to-back events from the state machine (state_changed + assistant_message
 //         arriving 50ms apart) are never silently dropped.
 
-import { useEffect, useReducer } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import type { Dispatch } from "react";
 
 import { WS_VOICE_URL } from "../api/config";
@@ -38,7 +38,10 @@ export type VoiceEvent =
   | { type: "speaking_failed"; reason: string; turn_id: string }
   // Day 12 — audio robustness events
   | { type: "recording_cap_hit" }
-  | { type: "audio_device_recovered" };
+  | { type: "audio_device_recovered" }
+  // Day 16 — amplitude is intentionally NOT queued; see onmessage handler below.
+  // High-frequency (~20Hz), latest value wins, missing one is invisible.
+  | { type: "amplitude"; value: number; source: "mic" | "tts" };
 
 const MAX_QUEUE = 50;
 
@@ -67,6 +70,9 @@ function queueReducer(state: VoiceEvent[], action: QueueAction): VoiceEvent[] {
 export interface VoiceEventsHook {
   events: VoiceEvent[];
   dispatch: Dispatch<QueueAction>;
+  // Side channel for amplitude — read each frame by Blob's rAF loop.
+  // { current: number } rather than MutableRefObject (deprecated in React 19).
+  amplitudeRef: { current: number };
 }
 
 // Returns the full event queue and the dispatch function.
@@ -75,6 +81,9 @@ export interface VoiceEventsHook {
 // regardless of how quickly the backend sends them.
 export function useVoiceEvents(): VoiceEventsHook {
   const [events, dispatch] = useReducer(queueReducer, []);
+  // Amplitude side channel: written by onmessage, read by Blob's rAF loop each frame.
+  // Never goes through the reducer queue — see onmessage handler below for the rationale.
+  const amplitudeRef = useRef(0);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -89,6 +98,13 @@ export function useVoiceEvents(): VoiceEventsHook {
       ws.onmessage = (e) => {
         try {
           const ev = JSON.parse(e.data) as VoiceEvent;
+          if (ev.type === "amplitude") {
+            // Side channel: latest value wins. Never queued because:
+            // - ~20Hz rate would backlog and delay real state events
+            // - missing one amplitude tick is invisible to the user
+            amplitudeRef.current = ev.value;
+            return;
+          }
           console.log("voice event:", ev);
           dispatch({ type: "event_received", event: ev });
         } catch (err) {
@@ -97,6 +113,9 @@ export function useVoiceEvents(): VoiceEventsHook {
       };
 
       ws.onclose = () => {
+        // Zero amplitude before clearing the queue so the orb doesn't ghost
+        // on the last value after a WebSocket drop.
+        amplitudeRef.current = 0;
         // Clear stale events on disconnect so they don't replay after reconnect.
         dispatch({ type: "clear" });
         if (!cancelled) {
@@ -114,5 +133,5 @@ export function useVoiceEvents(): VoiceEventsHook {
     };
   }, []);
 
-  return { events, dispatch };
+  return { events, dispatch, amplitudeRef };
 }

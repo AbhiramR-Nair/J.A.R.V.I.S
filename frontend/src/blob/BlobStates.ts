@@ -42,12 +42,33 @@ export interface BlobStateConfig {
   // --- Overall ---
   scale: number;    // CSS transform scale on the outer wrapper
   opacity: number;  // overall opacity; muted state uses ~0.4 to dim the orb
+
+  // --- Audio reactivity coefficients ---
+  // Each field is multiplied by the EMA-smoothed amplitude (0.0–1.0) and added
+  // on top of the base value each rAF frame. Zero means the state ignores that
+  // channel — only listening and speaking have non-zero values because those are
+  // the only states with an active audio source.
+  audio: {
+    pulseK: number;          // scale boost: 1 + amp * pulseK  (speaking only)
+    conicSpeedK: number;     // conic rotation: baseSpeed * (1 + amp * conicSpeedK)
+    colorAlphaK: number;     // radial gradient alpha: baseAlpha * (1 + amp * colorAlphaK)
+    conicSaturateK: number;  // CSS saturate() on conic layer: 1 + amp * conicSaturateK
+    highlightSizeK: number;  // specular size: baseSize * (1 + amp * highlightSizeK)
+    highlightAlphaK: number; // specular alpha: 0.45 + amp * highlightAlphaK
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Per-state configs — first-pass values. All palettes sampled from the
 // ElevenLabs orb reference video. Tune on Day 16 after visual review.
 // ---------------------------------------------------------------------------
+
+// Spread into the four states that have no active audio source (idle, thinking,
+// muted, error). Makes the intentional zeros scannable and avoids repetition.
+const NO_AUDIO_REACTIVITY = {
+  pulseK: 0, conicSpeedK: 0, colorAlphaK: 0,
+  conicSaturateK: 0, highlightSizeK: 0, highlightAlphaK: 0,
+} as const;
 
 export const BLOB_STATES: Record<VisualStateLiteral, BlobStateConfig> = {
   idle: {
@@ -62,6 +83,7 @@ export const BLOB_STATES: Record<VisualStateLiteral, BlobStateConfig> = {
     grainOpacity: 0.65,
     scale: 1.0,
     opacity: 1.0,
+    audio: NO_AUDIO_REACTIVITY,
   },
 
   listening: {
@@ -77,6 +99,9 @@ export const BLOB_STATES: Record<VisualStateLiteral, BlobStateConfig> = {
     grainOpacity: 0.65,
     scale: 1.05,
     opacity: 1.0,
+    // Calmer conic boost (0.6) than speaking (2.8) — attentive listening vs. actively talking.
+    // No pulseK: the scale pulse is reserved for the assistant's voice output only.
+    audio: { pulseK: 0, conicSpeedK: 0.6, colorAlphaK: 1.2, conicSaturateK: 0.7, highlightSizeK: 0.3, highlightAlphaK: 0.25 },
   },
 
   thinking: {
@@ -92,6 +117,7 @@ export const BLOB_STATES: Record<VisualStateLiteral, BlobStateConfig> = {
     grainOpacity: 0.7,
     scale: 0.98,
     opacity: 1.0,
+    audio: NO_AUDIO_REACTIVITY,
   },
 
   speaking: {
@@ -107,6 +133,9 @@ export const BLOB_STATES: Record<VisualStateLiteral, BlobStateConfig> = {
     grainOpacity: 0.6,
     scale: 1.02,
     opacity: 1.0,
+    // pulseK > 0: scale pulse is speaking-only — the orb breathes with the assistant's voice.
+    // conicSpeedK 2.8 is much higher than listening's 0.6 — the conic spins visibly faster.
+    audio: { pulseK: 0.05, conicSpeedK: 2.8, colorAlphaK: 1.2, conicSaturateK: 0.7, highlightSizeK: 0.3, highlightAlphaK: 0.25 },
   },
 
   muted: {
@@ -122,6 +151,7 @@ export const BLOB_STATES: Record<VisualStateLiteral, BlobStateConfig> = {
     grainOpacity: 0.5,
     scale: 0.92,
     opacity: 0.4,
+    audio: NO_AUDIO_REACTIVITY,
   },
 
   error: {
@@ -137,6 +167,7 @@ export const BLOB_STATES: Record<VisualStateLiteral, BlobStateConfig> = {
     grainOpacity: 0.65,
     scale: 1.0,
     opacity: 1.0,
+    audio: NO_AUDIO_REACTIVITY,
   },
 };
 

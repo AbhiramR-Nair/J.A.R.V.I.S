@@ -68,6 +68,9 @@ class ConversationOrchestrator:
         self._inflight: asyncio.Task | None = None
         # Reference to the auto-recovery task so GC can't silently cancel it.
         self._recovery_task: asyncio.Task | None = None
+        # Amplitude broadcast task — runs during LISTENING and SPEAKING only.
+        # Cancelled by _transition() on every state change.
+        self._amp_broadcast_task: asyncio.Task | None = None
 
         logger.info(f"conversation orchestrator initialized — state={self._state.value}")
 
@@ -253,6 +256,14 @@ class ConversationOrchestrator:
     async def _transition(self, new_state: VoiceState) -> None:
         # MUST be called with self._lock already held.
         # G3: this is the ONLY place that mutates self._state.
+
+        # Cancel the amplitude broadcast on every state change — only LISTENING
+        # and SPEAKING have an active audio source to react to.
+        # cancel() schedules CancelledError at the next asyncio.sleep(); no await needed.
+        if self._amp_broadcast_task and not self._amp_broadcast_task.done():
+            self._amp_broadcast_task.cancel()
+        self._amp_broadcast_task = None
+
         prev = self._state
         self._state = new_state
         await self._broadcast(
@@ -262,6 +273,36 @@ class ConversationOrchestrator:
             ).model_dump()
         )
         logger.debug(f"orchestrator: {prev.value} → {new_state.value}")
+
+        # Start a fresh broadcast task for audio-active states.
+        # create_task() is safe inside the lock — it schedules the coroutine but
+        # doesn't run it until the next event-loop tick after this method returns.
+        if new_state == VoiceState.LISTENING:
+            self._amp_broadcast_task = asyncio.create_task(
+                self._broadcast_amplitude("mic")
+            )
+        elif new_state == VoiceState.SPEAKING:
+            self._amp_broadcast_task = asyncio.create_task(
+                self._broadcast_amplitude("tts")
+            )
+
+    async def _broadcast_amplitude(self, source: str) -> None:
+        """Poll amplitude from the active source and broadcast at amplitude_broadcast_hz.
+
+        Runs as a background task during LISTENING (source='mic') and SPEAKING
+        (source='tts'). Cancelled by _transition() on every state change — CancelledError
+        propagates naturally from asyncio.sleep() with no try/except needed.
+        Not logged per-tick: 20Hz × a 30s turn = 600 lines per turn.
+        """
+        interval = 1.0 / self._settings.amplitude_broadcast_hz
+        while True:
+            value = (
+                self._recorder.latest_amplitude
+                if source == "mic"
+                else self._tts.latest_amplitude
+            )
+            await self._broadcast({"type": "amplitude", "value": value, "source": source})
+            await asyncio.sleep(interval)
 
     async def _handle_error(self, msg: str) -> None:
         """Transition to ERROR and schedule auto-recovery to IDLE after 3s.
@@ -537,4 +578,6 @@ class ConversationOrchestrator:
                 pass
         if self._recovery_task and not self._recovery_task.done():
             self._recovery_task.cancel()
+        if self._amp_broadcast_task and not self._amp_broadcast_task.done():
+            self._amp_broadcast_task.cancel()
         logger.info("conversation orchestrator closed")

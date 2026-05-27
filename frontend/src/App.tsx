@@ -25,9 +25,11 @@ function App() {
   const [errorToast, setErrorToast] = useState<string | null>(null);
   // Day 11: voice state from the orchestrator's state_changed events.
   const [voiceState, setVoiceState] = useState<VoiceStateLiteral>("idle");
+  // Dev-only: mirrors amplitudeRef for display in the slider. Removed Day 17.
+  const [devAmp, setDevAmp] = useState(0);
 
   // useVoiceEvents returns a FIFO queue + dispatch. Consume events[0] one at a time.
-  const { events, dispatch } = useVoiceEvents();
+  const { events, dispatch, amplitudeRef } = useVoiceEvents();
 
   // Process the head of the event queue. Dispatches event_consumed at the end so
   // the next event becomes events[0] and triggers another run of this effect.
@@ -53,6 +55,10 @@ function App() {
     } else if (event.type === "state_changed") {
       // Orchestrator state drives the status label from Day 11 onward.
       setVoiceState(event.state);
+      // Zero amplitude when leaving listening/speaking so the orb doesn't ghost
+      // stale reactivity into thinking/idle while the EMA decays.
+      const audioActive = event.state === "listening" || event.state === "speaking";
+      if (!audioActive) amplitudeRef.current = 0;
     } else if (event.type === "assistant_message") {
       setMessages((prev) => [...prev, { role: "assistant", text: event.text }]);
     } else if (event.type === "speaking_failed") {
@@ -131,25 +137,44 @@ function App() {
       {/* Main content area */}
       <div className="flex flex-col items-center justify-center flex-1 gap-4">
         {/* Animated orb — visual face of the assistant */}
-        <Blob voiceState={voiceState} size={180} />
+        <Blob voiceState={voiceState} size={180} amplitudeRef={amplitudeRef} />
 
         {/* Dev-only state cycler: force any voice state without triggering the backend.
             Removed on Day 17 polish. Only renders when Vite's DEV flag is true. */}
         {import.meta.env.DEV && (
-          <div className="flex gap-1 flex-wrap justify-center">
-            {(["idle", "listening", "thinking", "speaking", "muted", "error"] as VoiceStateLiteral[]).map((s) => (
-              <button
-                key={s}
-                onClick={() => setVoiceState(s)}
-                className={`font-mono text-xs px-2 py-1 rounded border transition-colors ${
-                  voiceState === s
-                    ? "bg-cyan-600/60 border-cyan-400 text-cyan-100"
-                    : "bg-black/30 border-white/10 text-white/50 hover:text-white/80 hover:border-white/30"
-                }`}
-              >
-                {s}
-              </button>
-            ))}
+          <div className="flex flex-col items-center gap-2">
+            <div className="flex gap-1 flex-wrap justify-center">
+              {(["idle", "listening", "thinking", "speaking", "muted", "error"] as VoiceStateLiteral[]).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setVoiceState(s)}
+                  className={`font-mono text-xs px-2 py-1 rounded border transition-colors ${
+                    voiceState === s
+                      ? "bg-cyan-600/60 border-cyan-400 text-cyan-100"
+                      : "bg-black/30 border-white/10 text-white/50 hover:text-white/80 hover:border-white/30"
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+            {/* Amplitude slider: drag to simulate mic/TTS input without the voice loop. */}
+            <div className="flex items-center gap-2 font-mono text-xs text-white/50">
+              <span>amp</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={devAmp}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setDevAmp(v);
+                  amplitudeRef.current = v / 100;
+                }}
+                className="w-28 accent-cyan-400"
+              />
+              <span className="w-8 text-right">{(devAmp / 100).toFixed(2)}</span>
+            </div>
           </div>
         )}
 
