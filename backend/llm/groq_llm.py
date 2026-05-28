@@ -25,6 +25,7 @@ from backend.llm.base import (
     LLMRateLimitError,
     LLMResponse,
     LLMUnavailableError,
+    TextResponse,
 )
 
 
@@ -45,7 +46,7 @@ class GroqLLMProvider(BaseProvider):
 
     async def generate(
         self,
-        prompt: str,
+        prompt: str | list,  # str for normal use; list[types.Content] accepted but flattened
         *,
         system_prompt: str | None = None,
         tools: list | None = None,  # accepted but ignored — Groq LLM has no function calling
@@ -53,6 +54,17 @@ class GroqLLMProvider(BaseProvider):
         # Fail fast with a clear message if the key was never set.
         if not self._groq_api_key:
             raise LLMAuthError("GROQ_API_KEY is not set in .env")
+
+        # Multi-turn contents list arrives here only when Gemini fails mid-tool-loop
+        # and the router falls back. Groq can't replay tool calls, so flatten to text.
+        if isinstance(prompt, list):
+            segments = []
+            for item in prompt:
+                if hasattr(item, "parts"):
+                    for p in item.parts:
+                        if hasattr(p, "text") and p.text:
+                            segments.append(p.text)
+            prompt = "\n".join(segments) if segments else "[no readable prompt]"
 
         messages: list[dict] = []
         if system_prompt:
@@ -87,7 +99,7 @@ class GroqLLMProvider(BaseProvider):
             extra={"model": self._model, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
         )
 
-        return LLMResponse(
+        return TextResponse(
             text=text,
             provider=self.name,
             model=self._model,

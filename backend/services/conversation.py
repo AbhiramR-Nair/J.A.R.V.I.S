@@ -21,7 +21,9 @@ from pathlib import Path
 from loguru import logger
 
 from backend.config.settings import Settings
-from backend.llm.base import LLMError
+from backend.llm.base import LLMError, TextResponse
+from backend.tools import registry
+from backend.tools.registry import ToolNotFoundError, ToolSchemaError
 from backend.llm.router import LLMRouter
 from backend.memory import importance, sqlite_store, vector_store
 from backend.models.voice import (
@@ -388,19 +390,107 @@ class ConversationOrchestrator:
                 })
                 await self._transition(VoiceState.THINKING)
 
-            # ── LLM ───────────────────────────────────────────────────────────
+            # ── LLM + tool-call loop ──────────────────────────────────────────
+            # Lazy import: keeps the Gemini SDK out of the module top level.
+            # Only needed here — no other method touches Gemini types directly.
+            from google.genai import types as _genai_types
+
             context = await self._build_context(project_id, stt_result.text)
             system_prompt = self._build_system_prompt(context)
-            try:
-                llm_response = await self._llm.generate(stt_result.text, system_prompt=system_prompt)
-            except LLMError:
+
+            # Build the multi-turn contents list. Context is already in system_prompt;
+            # the user content is just the raw transcription text.
+            contents: list = [
+                _genai_types.Content(
+                    role="user",
+                    parts=[_genai_types.Part(text=stt_result.text)],
+                )
+            ]
+            active_tools = registry.gemini_function_schemas() if len(registry) > 0 else None
+            final_text: str | None = None
+            final_response = None  # last LLMResponse — used for provider/model in persist
+
+            for _iteration in range(self._settings.max_tool_calls):
+                # MUTED re-check before each LLM call (voice-pipeline SKILL.md rule).
+                # Slow tools (PDF, web search) are exactly when the user hits mute.
                 async with self._lock:
                     if self._state == VoiceState.MUTED:
                         return
-                    await self._handle_error("Couldn't get a response. Please try again.")
-                return
 
-            assistant_text = llm_response.text
+                try:
+                    llm_response = await self._llm.generate(
+                        contents,
+                        system_prompt=system_prompt,
+                        tools=active_tools,
+                    )
+                except LLMError:
+                    async with self._lock:
+                        if self._state == VoiceState.MUTED:
+                            return
+                        await self._handle_error("Couldn't get a response. Please try again.")
+                    return
+
+                final_response = llm_response
+
+                if isinstance(llm_response, TextResponse):
+                    final_text = llm_response.text
+                    break
+
+                # Tool call — execute and loop back for the next LLM call.
+                fc_name = llm_response.tool_name
+                fc_args = llm_response.tool_args
+
+                # Preserve the model's content object EXACTLY — Gemini requires the
+                # full object in the next call. Reconstructing from strings causes a
+                # Gemini API error. (Day 19 design §5 — the #1 gotcha in this loop.)
+                contents.append(llm_response.raw.candidates[0].content)
+
+                logger.info(f"tool_call iter={_iteration}: {fc_name}({fc_args})")
+
+                try:
+                    tool_result = await registry.execute(fc_name, fc_args)
+                except (ToolNotFoundError, ToolSchemaError):
+                    raise  # hard error — propagates to _process_turn → _handle_error
+
+                contents.append(_genai_types.Content(
+                    role="user",
+                    parts=[_genai_types.Part.from_function_response(
+                        name=fc_name,
+                        response={"result": tool_result},
+                    )],
+                ))
+
+                logger.info(f"tool_result: {fc_name} → {tool_result!r}")
+
+            else:
+                # Loop exhausted without a text response — hit max_tool_calls (Q8).
+                # Force one final text-only call so the user gets some reply.
+                logger.warning(
+                    f"tool-call loop hit max_tool_calls={self._settings.max_tool_calls}"
+                )
+                async with self._lock:
+                    if self._state == VoiceState.MUTED:
+                        return
+                try:
+                    fallback_r = await self._llm.generate(
+                        contents + [_genai_types.Content(
+                            role="user",
+                            parts=[_genai_types.Part(
+                                text="[max tool calls reached; please reply in plain text only]"
+                            )],
+                        )],
+                        system_prompt=system_prompt,
+                        tools=None,
+                    )
+                    if isinstance(fallback_r, TextResponse):
+                        final_text = fallback_r.text
+                        final_response = fallback_r
+                    else:
+                        final_text = "I'm not sure how to help with that."
+                except LLMError:
+                    final_text = "I'm not sure how to help with that."
+
+            assistant_text = final_text  # guaranteed non-None: set in break or else
 
             # ── Persist ───────────────────────────────────────────────────────
             # SQLite is sync and fast for single-user; no executor needed here.
@@ -409,8 +499,8 @@ class ConversationOrchestrator:
                 conversation_id=conversation_id,
                 user_text=stt_result.text,
                 assistant_text=assistant_text,
-                provider=llm_response.provider,
-                model=llm_response.model,
+                provider=final_response.provider if final_response else "unknown",
+                model=final_response.model if final_response else "unknown",
             )
 
             # ── Broadcast + transition to SPEAKING ────────────────────────────

@@ -33,7 +33,7 @@ class LLMRouter:
 
     async def generate(
         self,
-        prompt: str,
+        prompt: str | list,  # str for single-turn; list[types.Content] for multi-turn tool loop
         *,
         system_prompt: str | None = None,
         tools: list | None = None,  # list[types.Tool] from registry; None = no function calling
