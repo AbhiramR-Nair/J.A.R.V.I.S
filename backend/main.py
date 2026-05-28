@@ -144,6 +144,13 @@ async def lifespan(app: FastAPI):
         settings=s,
     )
 
+    # Tool registration — import each tool module to trigger its @registry.register decorator.
+    # The import IS the side effect. To add a new tool: add one line here.
+    # To remove a tool: delete the line. The registry is cleared on each restart.
+    import backend.tools.get_current_time  # noqa: F401
+    from backend.tools import registry as _tool_registry
+    logger.info(f"tools registered: {len(_tool_registry)}")
+
     # ready flag: gate on all four subsystems being fully constructed.
     # An early PTT press before this line cannot trigger a half-built service.
     app.state.ready = True
