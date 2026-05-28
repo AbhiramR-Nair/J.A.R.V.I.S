@@ -193,14 +193,12 @@ research-jarvis/
 │   │   ├── main.tsx
 │   │   ├── components/
 │   │   │   ├── ChatPanel.tsx
-│   │   │   ├── StatusBar.tsx
 │   │   │   └── SettingsPanel.tsx
 │   │   ├── blob/                   # SVG + CSS animated blob
 │   │   │   ├── Blob.tsx
 │   │   │   └── BlobStates.ts
 │   │   ├── hooks/
-│   │   │   ├── useWebSocket.ts
-│   │   │   └── useVoiceState.ts
+│   │   │   └── useWebSocket.ts
 │   │   └── websocket/
 │   │       └── client.ts
 │   ├── public/
