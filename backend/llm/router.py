@@ -36,12 +36,14 @@ class LLMRouter:
         prompt: str,
         *,
         system_prompt: str | None = None,
+        tools: list | None = None,  # list[types.Tool] from registry; None = no function calling
     ) -> LLMResponse:
         primary_error: Exception | None = None
 
         # --- Try primary ---
         try:
-            response = await self.primary.generate(prompt, system_prompt=system_prompt)
+            # tools is threaded to the primary only — Gemini supports function calling.
+            response = await self.primary.generate(prompt, system_prompt=system_prompt, tools=tools)
             await cost_tracker.record(response)
             return response
 
@@ -65,8 +67,10 @@ class LLMRouter:
         # immediately because falling back is unlikely to help.
 
         # --- Try fallback ---
+        # Fallback (Groq LLM) does not support function calling — pass tools=None.
+        # It returns TextResponse, which the orchestrator handles normally.
         try:
-            response = await self.fallback.generate(prompt, system_prompt=system_prompt)
+            response = await self.fallback.generate(prompt, system_prompt=system_prompt, tools=None)
             await cost_tracker.record(response)
             return response
 

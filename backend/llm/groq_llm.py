@@ -48,7 +48,7 @@ class GroqLLMProvider(BaseProvider):
         prompt: str,
         *,
         system_prompt: str | None = None,
-        # tools: list[dict] | None = None,  # Day 20 — function calling
+        tools: list | None = None,  # accepted but ignored — Groq LLM has no function calling
     ) -> LLMResponse:
         # Fail fast with a clear message if the key was never set.
         if not self._groq_api_key:

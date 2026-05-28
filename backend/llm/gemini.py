@@ -19,6 +19,8 @@ from backend.llm.base import (
     LLMRateLimitError,
     LLMResponse,
     LLMUnavailableError,
+    TextResponse,
+    ToolCallResponse,
 )
 
 
@@ -39,15 +41,16 @@ class GeminiProvider(BaseProvider):
         prompt: str,
         *,
         system_prompt: str | None = None,
-        # tools: list[dict] | None = None,  # Day 20 — function calling
+        tools: list | None = None,  # list[types.Tool] from registry.gemini_function_schemas()
     ) -> LLMResponse:
-        # Build a config object only when we have a system prompt; otherwise
-        # passing config=None lets the SDK use its own defaults cleanly.
-        config = None
+        # Build config, adding tools only when the registry has something registered.
+        # tools=None means a plain text call; the model won't attempt function calling.
+        config_kwargs: dict = {}
         if system_prompt:
-            config = types.GenerateContentConfig(
-                system_instruction=system_prompt,
-            )
+            config_kwargs["system_instruction"] = system_prompt
+        if tools is not None:
+            config_kwargs["tools"] = tools
+        config = types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
         try:
             # aio namespace is the async counterpart to the sync client.
@@ -89,7 +92,27 @@ class GeminiProvider(BaseProvider):
             extra={"model": self._model, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
         )
 
-        return LLMResponse(
+        # Branch on function_calls: if the model wants to call a tool, return
+        # ToolCallResponse so the orchestrator can execute it and loop back.
+        # raw=response is kept on both branches — the multi-turn contents list
+        # in conversation.py needs raw.candidates[0].content to be preserved exactly.
+        if response.function_calls:
+            fc = response.function_calls[0]  # v1: single tool call per iteration
+            logger.debug(
+                "gemini_tool_call",
+                extra={"tool_name": fc.name, "tool_args": fc.args},
+            )
+            return ToolCallResponse(
+                tool_name=fc.name,
+                tool_args=dict(fc.args),
+                provider=self.name,
+                model=self._model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                raw=response,
+            )
+
+        return TextResponse(
             text=response.text,
             provider=self.name,
             model=self._model,

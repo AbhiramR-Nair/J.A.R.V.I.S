@@ -103,6 +103,9 @@ class Settings(BaseSettings):
     semantic_k: int = 3                  # top-k ChromaDB results for semantic context
     context_char_cap: int = 6000         # crude char cap on injected context (~1500 tokens)
 
+    # Tool-calling (Day 20)
+    max_tool_calls: int = 5              # safety cap on tool-call loop iterations (Q8)
+
     # Misc
     app_version: str = "0.1.0"
     request_id_header: str = "X-Request-ID"

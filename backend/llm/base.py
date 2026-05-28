@@ -7,33 +7,42 @@ uniformly without knowing anything provider-specific.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel
 
 
-# Provider-agnostic result. The API layer (ChatResponse) and the cost tracker
-# read these fields and never touch an SDK-specific object — that isolation is
-# the whole reason this dataclass exists. `raw` holds the original SDK response
-# for debugging only; nothing in normal flow should depend on its shape.
-@dataclass
-class LLMResponse:
-    """Normalized response returned by every BaseProvider.
-
-    Fields:
-        text: the model's reply
-        provider: 'gemini' or 'openai' — which one actually answered
-        model: the exact model id used (e.g. 'gemini-2.5-flash')
-        prompt_tokens: input tokens (None if the provider didn't report them)
-        completion_tokens: output tokens (None if not reported)
-        raw: the original SDK response object (debugging only)
-    """
-
-    text: str
-    provider: str
-    model: str
+# Shared fields across both response types.
+# raw holds the original SDK response object — the orchestrator needs
+# raw.candidates[0].content to build the multi-turn contents list for Gemini.
+# Nothing in normal flow should depend on raw's shape beyond that one access.
+class _LLMResponseBase(BaseModel):
+    provider: str           # 'gemini' or 'openai'
+    model: str              # exact model id, e.g. 'gemini-2.5-flash'
     prompt_tokens: int | None
     completion_tokens: int | None
-    raw: Any
+    raw: Any                # SDK response object; arbitrary_types_allowed covers this
+
+    model_config = {"arbitrary_types_allowed": True}
+
+
+# Returned when the model produces a plain text reply (no tool call).
+class TextResponse(_LLMResponseBase):
+    type: Literal["text"] = "text"
+    text: str
+
+
+# Returned when the model requests a tool call instead of producing text.
+# tool_name and tool_args come directly from the SDK's function_calls property.
+class ToolCallResponse(_LLMResponseBase):
+    type: Literal["tool_call"] = "tool_call"
+    tool_name: str
+    tool_args: dict[str, Any]
+
+
+# Union alias used as the return type throughout the LLM layer and orchestrator.
+# Switch on response.type ("text" | "tool_call") or isinstance() — both work.
+LLMResponse = TextResponse | ToolCallResponse
 
 
 # Exception hierarchy. Each provider maps its SDK-specific errors onto these
@@ -68,7 +77,7 @@ class BaseProvider(ABC):
         prompt: str,
         *,
         system_prompt: str | None = None,
-        # tools: list[dict] | None = None,  # Day 20 — function calling
+        tools: list | None = None,  # list[types.Tool] for Gemini; None for fallback
     ) -> LLMResponse:
         """Send a single user prompt; return the reply.
 
@@ -76,5 +85,6 @@ class BaseProvider(ABC):
         - catch SDK-specific exceptions and re-raise them as LLMRateLimitError /
           LLMAuthError / LLMUnavailableError so the router reacts uniformly
         - populate token counts when the SDK provides them (None otherwise)
+        - return ToolCallResponse when the model requests a tool call
         """
         ...
