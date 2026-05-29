@@ -22,7 +22,9 @@ function App() {
   // Active project name — fetched on mount, updated live via project_changed WS events.
   const [activeProject, setActiveProject] = useState<string>("");
   // useVoiceEvents returns a FIFO queue + dispatch. Consume events[0] one at a time.
-  const { events, dispatch, amplitudeRef, connectionState } = useVoiceEvents();
+  const { events, dispatch, amplitudeRef, connectionState, send } = useVoiceEvents();
+  // True for ~30s after a PDF is dragged onto the window; cleared on voice summarize or timeout.
+  const [pdfPending, setPdfPending] = useState(false);
 
   // Process the head of the event queue. Dispatches event_consumed at the end so
   // the next event becomes events[0] and triggers another run of this effect.
@@ -55,6 +57,9 @@ function App() {
       setErrorToast("Switched to default microphone.");
     } else if (event.type === "project_changed") {
       setActiveProject(event.name);
+    } else if (event.type === "pdf_pending") {
+      // Backend confirmed the dropped PDF path is stored and ready.
+      setPdfPending(true);
     }
 
     dispatch({ type: "event_consumed" });
@@ -79,6 +84,34 @@ function App() {
     return () => clearTimeout(timer);
   }, [errorToast]);
 
+  // Auto-clear the PDF pending cue after 30s if the user hasn't acted on it.
+  useEffect(() => {
+    if (!pdfPending) return;
+    const timer = setTimeout(() => setPdfPending(false), 30000);
+    return () => clearTimeout(timer);
+  }, [pdfPending]);
+
+  // Drag-and-drop: user drops a PDF onto the window.
+  // WebView2 does NOT expose file.path (unlike Electron), so we upload the file
+  // content to POST /pdf/drop. The backend saves it to data/dropped/ and gets a
+  // real filesystem path, then broadcasts pdf_pending via WebSocket.
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (!file || !file.name.toLowerCase().endsWith(".pdf")) return;
+    const form = new FormData();
+    form.append("file", file);
+    fetch(`${API_BASE}/pdf/drop`, { method: "POST", body: form }).catch((err) =>
+      console.error("pdf drop upload failed:", err)
+    );
+    // pdf_pending is broadcast by the backend on successful upload — no need to
+    // set pdfPending here; it arrives via the WebSocket event consumer above.
+  }
+
   // Close settings on Escape. Listener is only active while settings is open.
   useEffect(() => {
     if (!settingsOpen) return;
@@ -96,7 +129,11 @@ function App() {
   }
 
   return (
-    <div className="flex flex-col h-screen relative bg-[#060d14]">
+    <div
+      className="flex flex-col h-screen relative bg-[#060d14]"
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <HeaderBand
         connectionState={connectionState}
         onToggleSettings={() => setSettingsOpen((s) => !s)}
@@ -114,6 +151,12 @@ function App() {
         </AnimatePresence>
 
         <ChatPanel messages={messages} />
+
+        {pdfPending && (
+          <div className="bg-cyan-900/60 backdrop-blur-sm rounded-lg px-4 py-2 text-cyan-200 font-mono text-xs max-w-sm text-center">
+            PDF ready — say "summarize this"
+          </div>
+        )}
 
         {errorToast && (
           <div className="bg-red-900/60 backdrop-blur-sm rounded-lg px-4 py-2 text-red-200 font-mono text-xs max-w-sm text-center">

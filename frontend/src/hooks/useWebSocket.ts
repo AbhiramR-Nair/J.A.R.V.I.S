@@ -46,6 +46,8 @@ export type VoiceEvent =
   | { type: "audio_device_recovered" }
   // Day 21 — project switch notification
   | { type: "project_changed"; name: string }
+  // Day 24 — PDF drag-and-drop: backend confirms the pending path was stored.
+  | { type: "pdf_pending"; path: string }
   // Day 16 — amplitude is intentionally NOT queued; see onmessage handler below.
   // High-frequency (~20Hz), latest value wins, missing one is invisible.
   | { type: "amplitude"; value: number; source: "mic" | "tts" };
@@ -81,6 +83,9 @@ export interface VoiceEventsHook {
   // { current: number } rather than MutableRefObject (deprecated in React 19).
   amplitudeRef: { current: number };
   connectionState: ConnectionState;
+  // Send a JSON message to the backend via the live WebSocket connection.
+  // No-op if the socket is not currently open.
+  send: (msg: unknown) => void;
 }
 
 // Returns the full event queue and the dispatch function.
@@ -96,6 +101,8 @@ export function useVoiceEvents(): VoiceEventsHook {
   // Retry counter: incremented on each close, reset to 0 on successful open.
   // Not state because it drives no render — only connectionState renders.
   const retryCountRef = useRef(0);
+  // Persistent ref to the live WebSocket so send() can reach it across reconnects.
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -106,6 +113,7 @@ export function useVoiceEvents(): VoiceEventsHook {
     function connect() {
       if (cancelled) return;
       ws = new WebSocket(WS_VOICE_URL);
+      wsRef.current = ws;
 
       ws.onopen = () => {
         retryCountRef.current = 0;
@@ -158,5 +166,11 @@ export function useVoiceEvents(): VoiceEventsHook {
     };
   }, []);
 
-  return { events, dispatch, amplitudeRef, connectionState };
+  function send(msg: unknown) {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(msg));
+    }
+  }
+
+  return { events, dispatch, amplitudeRef, connectionState, send };
 }
