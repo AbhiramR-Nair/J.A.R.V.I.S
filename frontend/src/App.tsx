@@ -19,6 +19,8 @@ function App() {
   const [voiceState, setVoiceState] = useState<VoiceStateLiteral>("idle");
   // Controls the settings panel; toggled by the gear icon in HeaderBand.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Active project name — fetched on mount, updated live via project_changed WS events.
+  const [activeProject, setActiveProject] = useState<string>("");
   // useVoiceEvents returns a FIFO queue + dispatch. Consume events[0] one at a time.
   const { events, dispatch, amplitudeRef, connectionState } = useVoiceEvents();
 
@@ -51,10 +53,24 @@ function App() {
       setErrorToast("Recording stopped at 30s limit.");
     } else if (event.type === "audio_device_recovered") {
       setErrorToast("Switched to default microphone.");
+    } else if (event.type === "project_changed") {
+      setActiveProject(event.name);
     }
 
     dispatch({ type: "event_consumed" });
   }, [events, dispatch]);
+
+  // Fetch the active project name once on mount.
+  // GET /projects returns all projects; find is_active to get the current one.
+  useEffect(() => {
+    fetch(`${API_BASE}/projects`)
+      .then((r) => r.json())
+      .then((projects: { name: string; is_active: boolean }[]) => {
+        const active = projects.find((p) => p.is_active);
+        if (active) setActiveProject(active.name);
+      })
+      .catch(() => {});
+  }, []);
 
   // Auto-clear the error toast after 3 seconds.
   useEffect(() => {
@@ -110,7 +126,7 @@ function App() {
           without affecting the flex layout above. pb-20 on the content div
           prevents the chat panel from sliding under it. */}
       <div className="absolute bottom-3 left-3 right-3">
-        <StatusBar voiceState={voiceState} amplitudeRef={amplitudeRef} />
+        <StatusBar voiceState={voiceState} amplitudeRef={amplitudeRef} activeProject={activeProject} />
       </div>
     </div>
   );

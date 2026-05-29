@@ -7,6 +7,7 @@ import { HudFrame } from "./HudFrame";
 interface StatusBarProps {
   voiceState: VoiceStateLiteral;
   amplitudeRef: { current: number };
+  activeProject: string;
 }
 
 // Per-state visual config: accent color (text + mic icon), and operational subtext.
@@ -24,7 +25,7 @@ const BAR_COUNT = 7;
 const BAR_MIN_H = 3;   // px — resting height for all bars
 const BAR_MAX_AMP = 11; // px of extra height at amplitude=1
 
-export function StatusBar({ voiceState, amplitudeRef }: StatusBarProps) {
+export function StatusBar({ voiceState, amplitudeRef, activeProject }: StatusBarProps) {
   // One ref per waveform bar. DOM writes happen directly in the RAF loop for
   // the same reason as the blob — avoids React re-render overhead at 60 fps.
   const barRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -100,6 +101,16 @@ export function StatusBar({ voiceState, amplitudeRef }: StatusBarProps) {
             />
           ))}
         </div>
+
+        {/* Active project chip — hidden until a project name is known */}
+        {activeProject && (
+          <span
+            style={{ color, letterSpacing: "0.12em", fontSize: 9, opacity: 0.55 }}
+            className="font-mono uppercase mx-auto"
+          >
+            [{activeProject}]
+          </span>
+        )}
 
         {/* Right cluster: state label + subtext */}
         <div className="flex flex-col items-end ml-auto">

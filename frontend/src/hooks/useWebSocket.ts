@@ -44,6 +44,8 @@ export type VoiceEvent =
   // Day 12 — audio robustness events
   | { type: "recording_cap_hit" }
   | { type: "audio_device_recovered" }
+  // Day 21 — project switch notification
+  | { type: "project_changed"; name: string }
   // Day 16 — amplitude is intentionally NOT queued; see onmessage handler below.
   // High-frequency (~20Hz), latest value wins, missing one is invisible.
   | { type: "amplitude"; value: number; source: "mic" | "tts" };

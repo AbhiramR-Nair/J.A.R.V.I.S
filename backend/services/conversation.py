@@ -462,6 +462,16 @@ class ConversationOrchestrator:
 
                 logger.info(f"tool_result: {fc_name} → {tool_result!r}")
 
+                # When the active project changes, push a project_changed event so
+                # the UI status bar updates without polling. Only broadcast on success
+                # (str result); a soft error returns a dict and means the switch failed.
+                if fc_name == "set_active_project" and isinstance(tool_result, str):
+                    try:
+                        active = sqlite_store.get_active_project()
+                        await self._broadcast({"type": "project_changed", "name": active["name"]})
+                    except Exception as exc:
+                        logger.warning(f"orchestrator: project_changed broadcast failed: {exc}")
+
             else:
                 # Loop exhausted without a text response — hit max_tool_calls (Q8).
                 # Force one final text-only call so the user gets some reply.
