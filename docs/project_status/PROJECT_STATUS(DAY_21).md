@@ -24,6 +24,7 @@
 | T-8 — Voice grammar tests | All four tools fired correctly via PTT voice queries. Logs confirmed end-to-end path | Done |
 | T-9 — Cross-project isolation | Beta "gadgets" fact did not appear in alpha recall query. ChromaDB per-project collection isolation is working | Done |
 | Fix — Case-sensitive project names | `sqlite_store.set_active_project()` now does `name.strip().lower()` before INSERT — prevents STT variants like "Kinase"/"KINASE"/"kinase" from creating duplicate projects | Done |
+| Fix — Status bar chip not showing | `API_BASE` was `http://localhost:8000`; Edge WebView2 resolves `localhost` → IPv6 `::1`, silently failing the REST fetch. Changed to `http://127.0.0.1:8000`. Added belt-and-suspenders: `voice.py` sends `project_changed` on WS connect so the chip initialises without any REST call | Done |
 | Fix — DB cleanup | `scripts/cleanup_projects.py` written and run; deleted misheard duplicates (Kainez, Kines, Logics Alpha, general project); restored `general` as active | Done |
 | Config — Gemini model | `settings.py` switched from `gemini-2.5-flash` → `gemini-flash-lite-latest` (quota issue — see §3) | Done |
 
@@ -84,6 +85,18 @@ STT consistently mishears project names spoken aloud (e.g. "kinase" → "Kainez"
 **Fix:** `name.strip().lower()` in `sqlite_store.set_active_project()` before any DB operation. All future switches normalize at the storage boundary.
 
 **Cleanup:** `scripts/cleanup_projects.py` cascade-deleted the four misheard duplicates (with their associated memory/message/conversation rows) and restored `general` as active.
+
+### Status bar chip not visible after Day 21 deployment
+
+**Symptom:** `[general]` chip never appeared in the status bar despite `activeProject` state and conditional render being in place.
+
+**Root cause:** `API_BASE` was set to `http://localhost:8000`. Edge WebView2 (the browser engine inside PyWebView on Windows) resolves `localhost` to `::1` (IPv6) for HTTP connections. Uvicorn binds only to `127.0.0.1` (IPv4). The REST fetch for `GET /projects` silently failed — caught by `.catch(() => {})` — leaving `activeProject` as `""` forever.
+
+This was the same IPv6 issue already documented for WebSocket (the `WS_VOICE_URL` comment in `config.ts` explains it), but not yet applied to `API_BASE`.
+
+**Fix:** changed `API_BASE` to `http://127.0.0.1:8000` in `frontend/src/api/config.ts`. Added a belt-and-suspenders path: `voice.py` now sends a `project_changed` event immediately after the `connected` handshake on every WS connection, so the chip initialises without needing a REST call at all.
+
+**Implication for SettingsPanel and other REST calls:** any other `fetch(${API_BASE}/...)` calls in the frontend would have been silently failing in PyWebView for the same reason. The `API_BASE` fix resolves all of them.
 
 ### Cross-project isolation test: unexpected result explained
 
@@ -205,6 +218,8 @@ EDIT:
   backend/memory/sqlite_store.py          -- name.strip().lower() in set_active_project
   backend/config/settings.py             -- gemini_model → gemini-flash-lite-latest
   backend/services/conversation.py        -- project_changed broadcast after set_active_project
+  backend/api/voice.py                    -- project_changed sent on WS connect (chip init fix)
+  frontend/src/api/config.ts              -- API_BASE localhost → 127.0.0.1 (IPv6 fix)
   frontend/src/hooks/useWebSocket.ts      -- project_changed event type added
   frontend/src/App.tsx                    -- activeProject state + fetch + event handler
   frontend/src/components/StatusBar.tsx   -- activeProject prop + [chip] display
@@ -221,5 +236,6 @@ EDIT:
 [pending] feat(ui): show active project in status bar with live WebSocket update
 [pending] docs(prompts): tool directives for the four project-memory tools
 [pending] config: switch to gemini-flash-lite-latest (free-tier quota exhausted)
-[pending] docs: Day 21 project status
+[pending] fix(ui): active project chip not showing in status bar
+[pending] docs: Day 21 project status (updated with chip fix)
 ```
