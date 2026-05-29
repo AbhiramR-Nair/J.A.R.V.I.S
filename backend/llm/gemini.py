@@ -41,22 +41,29 @@ class GeminiProvider(BaseProvider):
         prompt: str | list,  # str for single-turn; list[types.Content] for multi-turn tool loop
         *,
         system_prompt: str | None = None,
-        tools: list | None = None,  # list[types.Tool] from registry.gemini_function_schemas()
+        tools: list | None = None,       # list[types.Tool] from registry.gemini_function_schemas()
+        model: str | None = None,        # override self._model for this call (e.g. heavy model)
+        response_schema: type | None = None,  # Pydantic class → JSON mode structured output
     ) -> LLMResponse:
         # Build config, adding tools only when the registry has something registered.
         # tools=None means a plain text call; the model won't attempt function calling.
+        # response_schema forces JSON mode; the SDK validates the output against the class.
         config_kwargs: dict = {}
         if system_prompt:
             config_kwargs["system_instruction"] = system_prompt
         if tools is not None:
             config_kwargs["tools"] = tools
+        if response_schema is not None:
+            config_kwargs["response_mime_type"] = "application/json"
+            config_kwargs["response_schema"] = response_schema
         config = types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
+        active_model = model or self._model
         try:
             # aio namespace is the async counterpart to the sync client.
             # contents= accepts a plain string for single-turn prompts.
             response = await self._client.aio.models.generate_content(
-                model=self._model,
+                model=active_model,
                 contents=prompt,
                 config=config,
             )
@@ -89,7 +96,7 @@ class GeminiProvider(BaseProvider):
 
         logger.debug(
             "gemini_response",
-            extra={"model": self._model, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+            extra={"model": active_model, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
         )
 
         # Branch on function_calls: if the model wants to call a tool, return
@@ -106,16 +113,19 @@ class GeminiProvider(BaseProvider):
                 tool_name=fc.name,
                 tool_args=dict(fc.args),
                 provider=self.name,
-                model=self._model,
+                model=active_model,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 raw=response,
             )
 
+        # response.parsed is a Pydantic instance when response_schema was provided;
+        # None otherwise. Populated into TextResponse so callers skip JSON parsing.
         return TextResponse(
             text=response.text,
+            parsed=response.parsed,
             provider=self.name,
-            model=self._model,
+            model=active_model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             raw=response,

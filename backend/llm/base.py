@@ -27,9 +27,12 @@ class _LLMResponseBase(BaseModel):
 
 
 # Returned when the model produces a plain text reply (no tool call).
+# parsed is populated only when the caller passed response_schema — it holds
+# the already-validated Pydantic instance so callers don't have to parse r.text.
 class TextResponse(_LLMResponseBase):
     type: Literal["text"] = "text"
     text: str
+    parsed: Any = None
 
 
 # Returned when the model requests a tool call instead of producing text.
@@ -77,7 +80,9 @@ class BaseProvider(ABC):
         prompt: str | list,  # str for single-turn; list[types.Content] for multi-turn tool loop
         *,
         system_prompt: str | None = None,
-        tools: list | None = None,  # list[types.Tool] for Gemini; None for fallback
+        tools: list | None = None,       # list[types.Tool] for Gemini; None for fallback
+        model: str | None = None,        # per-call model override; None = use provider default
+        response_schema: type | None = None,  # Pydantic class for JSON-mode structured output
     ) -> LLMResponse:
         """Send a single user prompt; return the reply.
 

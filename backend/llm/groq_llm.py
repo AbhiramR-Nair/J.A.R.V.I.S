@@ -49,8 +49,15 @@ class GroqLLMProvider(BaseProvider):
         prompt: str | list,  # str for normal use; list[types.Content] accepted but flattened
         *,
         system_prompt: str | None = None,
-        tools: list | None = None,  # accepted but ignored — Groq LLM has no function calling
+        tools: list | None = None,       # accepted but ignored — Groq LLM has no function calling
+        model: str | None = None,        # accepted but ignored — Groq model is fixed in settings
+        response_schema: type | None = None,  # NOT supported — raises immediately
     ) -> LLMResponse:
+        if response_schema is not None:
+            raise LLMError(
+                "Groq fallback does not support structured output (response_schema). "
+                "Structured calls require Gemini to be available."
+            )
         # Fail fast with a clear message if the key was never set.
         if not self._groq_api_key:
             raise LLMAuthError("GROQ_API_KEY is not set in .env")

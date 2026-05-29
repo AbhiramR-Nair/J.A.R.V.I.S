@@ -109,6 +109,18 @@ class Settings(BaseSettings):
     # Tool-calling (Day 20)
     max_tool_calls: int = 5              # safety cap on tool-call loop iterations (Q8)
 
+    # Summarizer (Day 23)
+    # summarizer_direct_threshold: papers shorter than this skip map-reduce (single call).
+    # summarizer_chunk_max_concurrent: Semaphore cap — 3 in-flight chunk calls at a time.
+    #   Prevents bursting Gemini's per-minute rate limit on 20+ chunk papers.
+    # summarizer_chunk_summary_target: target char length for each intermediate summary.
+    # summarizer_model: must be the heavy model — JSON mode quality matters here.
+    summarizer_direct_threshold: int = 12000
+    summarizer_chunk_max_concurrent: int = 3
+    summarizer_chunk_summary_target: int = 400
+    summarizer_model: str = "gemini-2.5-flash"       # reduce + single-pass (JSON mode, needs heavy)
+    summarizer_chunk_model: str = "gemini-flash-lite-latest"  # map stage (plain text, high RPM)
+
     # Misc
     app_version: str = "0.1.0"
     request_id_header: str = "X-Request-ID"

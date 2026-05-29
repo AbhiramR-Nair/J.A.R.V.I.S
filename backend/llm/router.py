@@ -36,14 +36,22 @@ class LLMRouter:
         prompt: str | list,  # str for single-turn; list[types.Content] for multi-turn tool loop
         *,
         system_prompt: str | None = None,
-        tools: list | None = None,  # list[types.Tool] from registry; None = no function calling
+        tools: list | None = None,       # list[types.Tool] from registry; None = no function calling
+        model: str | None = None,        # per-call model override (e.g. heavy model for summarization)
+        response_schema: type | None = None,  # Pydantic class for JSON-mode structured output
     ) -> LLMResponse:
         primary_error: Exception | None = None
 
         # --- Try primary ---
         try:
-            # tools is threaded to the primary only — Gemini supports function calling.
-            response = await self.primary.generate(prompt, system_prompt=system_prompt, tools=tools)
+            # tools and response_schema are threaded to primary only — Gemini supports both.
+            response = await self.primary.generate(
+                prompt,
+                system_prompt=system_prompt,
+                tools=tools,
+                model=model,
+                response_schema=response_schema,
+            )
             await cost_tracker.record(response)
             return response
 
@@ -65,6 +73,15 @@ class LLMRouter:
 
         # LLMError (e.g. bad prompt 400) is NOT caught here — it re-raises
         # immediately because falling back is unlikely to help.
+
+        # Structured output calls cannot fall back — the fallback (Groq) does not
+        # support response_schema. Raise immediately with a clear message.
+        if response_schema is not None:
+            raise LLMError(
+                f"structured output call failed — primary ({self.primary.name}) "
+                f"unavailable and fallback does not support response_schema. "
+                f"Primary error: {primary_error}"
+            )
 
         # --- Try fallback ---
         # Fallback (Groq LLM) does not support function calling — pass tools=None.
