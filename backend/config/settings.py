@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     # gemini-flash-lite-latest: works when 2.0-flash/2.5-flash quotas are exhausted.
     # Switch back to gemini-2.0-flash once quota resets or billing is enabled.
     gemini_model: str = "gemini-flash-lite-latest"
-    gemini_model_heavy: str = "gemini-flash-lite-latest"
+    gemini_model_heavy: str = "gemini-2.5-flash"
     openai_model: str = "gpt-4o-mini"  # kept for reference; not used as fallback
     groq_model: str = "llama-3.3-70b-versatile"  # fallback LLM; free tier
 
