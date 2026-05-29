@@ -118,7 +118,7 @@ class Settings(BaseSettings):
     summarizer_direct_threshold: int = 12000
     summarizer_chunk_max_concurrent: int = 3
     summarizer_chunk_summary_target: int = 400
-    summarizer_model: str = "gemini-2.5-flash"       # reduce + single-pass (JSON mode, needs heavy)
+    summarizer_model: str = "gemini-flash-lite-latest"  # Day 24: 2.5-flash is 503 today; restore when quota resets
     summarizer_chunk_model: str = "gemini-flash-lite-latest"  # map stage (plain text, high RPM)
 
     # Misc
