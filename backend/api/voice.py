@@ -4,6 +4,7 @@
 # Day 11: state machine wired in. Day 16: amplitude data added.
 
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -99,6 +100,16 @@ async def ws_voice(ws: WebSocket) -> None:
                 logger.bind(request_id=rid).warning("WS recv: malformed JSON frame, ignored")
                 continue
             logger.bind(request_id=rid).debug(f"WS recv: {msg}")
+
+            # pdf_dropped: frontend sends this when the user drops a PDF onto the window.
+            # Store it as the pending path and broadcast pdf_pending so the UI can show a cue.
+            if msg.get("type") == "pdf_dropped":
+                raw_path = msg.get("path", "").strip()
+                if raw_path:
+                    from backend.services.pending_drop import set_pending_pdf
+                    set_pending_pdf(Path(raw_path))
+                    await manager.broadcast({"type": "pdf_pending", "path": raw_path})
+                    logger.bind(request_id=rid).info(f"pdf_dropped: stored pending path '{raw_path}'")
     except WebSocketDisconnect:
         manager.disconnect(ws)
         logger.bind(request_id=rid).info("WS /ws/voice disconnected")
