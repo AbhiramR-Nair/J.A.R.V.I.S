@@ -46,11 +46,15 @@ def get_active_project() -> dict:
 def set_active_project(name: str) -> dict:
     """Set the named project as active, creating it if it doesn't exist.
 
+    Name is normalized to lowercase so STT variants like 'Kinase'/'kinase'
+    resolve to the same project rather than creating duplicates.
+
     Uses a transaction so the DB is never left with zero active projects:
     step 1 deactivates all, step 2 activates the target. A crash between
     the two would roll back both, leaving the previous state intact.
     Returns the now-active project as a dict.
     """
+    name = name.strip().lower()
     conn = get_db()
 
     # 'with conn:' is Python's sqlite3 context manager: commits on clean exit,
