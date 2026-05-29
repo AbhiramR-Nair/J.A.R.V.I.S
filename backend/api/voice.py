@@ -84,6 +84,14 @@ async def ws_voice(ws: WebSocket) -> None:
     logger.bind(request_id=rid).info("WS /ws/voice connected")
     try:
         await ws.send_json({"type": "connected", "request_id": rid})
+        # Push the current active project immediately so the UI chip initialises
+        # without waiting for a REST fetch. Non-fatal if DB isn't ready yet.
+        try:
+            from backend.memory.sqlite_store import get_active_project
+            active = get_active_project()
+            await ws.send_json({"type": "project_changed", "name": active["name"]})
+        except Exception:
+            pass
         while True:
             try:
                 msg = await ws.receive_json()
