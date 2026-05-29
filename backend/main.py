@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from backend.api import audio, chat, debug, health, memory, projects, voice, window
+from backend.api import audio, chat, debug, health, memory, pdf, projects, voice, window
 from backend.api.voice import manager as ws_manager
 from backend.config.logging import configure_logging, request_id_var
 from backend.config.runtime_settings import get_input_device
@@ -153,6 +153,7 @@ async def lifespan(app: FastAPI):
     import backend.tools.log_to_project        # noqa: F401
     import backend.tools.recall_from_project   # noqa: F401
     import backend.tools.summarize_paper       # noqa: F401
+    import backend.tools.fetch_arxiv          # noqa: F401
     from backend.tools import registry as _tool_registry
     logger.info(f"tools registered: {len(_tool_registry)}")
 
@@ -222,4 +223,5 @@ app.include_router(voice.router)
 app.include_router(audio.router)
 app.include_router(projects.router)
 app.include_router(window.router)
+app.include_router(pdf.router)
 app.include_router(debug.router)
