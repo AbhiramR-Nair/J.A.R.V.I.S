@@ -1,10 +1,38 @@
-# Whitelist of launchable applications for the app_launcher tool.
-# Only apps listed here can be opened via subprocess.Popen (Version_1_plan.md rule #3).
-# Use absolute paths on Windows. For Microsoft Store apps use the shell:AppsFolder syntax.
+# App launcher whitelist — entries Jarvis is permitted to open.
 #
-# Example:
-# apps:
-#   vscode: "C:\\Users\\USER\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe"
-#   notepad: "C:\\Windows\\System32\\notepad.exe"
+# Three launch types:
+#   exe   — raw executable path (forward slashes work on Windows)
+#   shell — pre-built arg list for subprocess.Popen (e.g. PowerShell command)
+#   store — Microsoft Store / MSIX app via AUMID; get IDs with Get-StartApps
+#
+# Add new entries here; they take effect without restarting the backend.
+# Never put a path or command you haven't verified — open_app trusts this file.
 
-apps: {}
+apps:
+  vscode:
+    type: exe
+    path: "D:/Microsoft VS Code/Code.exe"
+
+  chrome:
+    type: exe
+    path: "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe"
+
+  cursor:
+    type: store
+    app_id: "Anysphere.Cursor"
+
+  spotify:
+    type: store
+    app_id: "SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"
+
+  word:
+    type: exe
+    path: "C:/Program Files/Microsoft Office/root/Office16/WINWORD.EXE"
+
+  excel:
+    type: exe
+    path: "C:/Program Files/Microsoft Office/root/Office16/EXCEL.EXE"
+
+  powerpoint:
+    type: exe
+    path: "C:/Program Files/Microsoft Office/root/Office16/POWERPNT.EXE"

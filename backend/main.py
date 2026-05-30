@@ -156,6 +156,8 @@ async def lifespan(app: FastAPI):
     import backend.tools.fetch_arxiv          # noqa: F401
     import backend.tools.web_search           # noqa: F401
     import backend.tools.grounded_search      # noqa: F401
+    import backend.tools.app_launcher         # noqa: F401
+    import backend.tools.timer                # noqa: F401
     from backend.tools import registry as _tool_registry
     logger.info(f"tools registered: {len(_tool_registry)}")
 

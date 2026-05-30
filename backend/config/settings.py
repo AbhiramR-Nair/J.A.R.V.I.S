@@ -131,6 +131,11 @@ class Settings(BaseSettings):
     web_search_content_cap: int = 800
     grounding_model: str = "gemini-flash-lite-latest"
 
+    # App launcher + timer (Day 26)
+    timer_max_minutes: float = 1440.0          # reject timers > 24h
+    notification_timeout_seconds: int = 10     # how long the plyer toast stays visible
+    timer_announce_on_idle: bool = True        # speak completion only when voice loop is IDLE
+
     # Misc
     app_version: str = "0.1.0"
     request_id_header: str = "X-Request-ID"
