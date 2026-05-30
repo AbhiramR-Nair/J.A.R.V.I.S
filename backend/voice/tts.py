@@ -10,6 +10,7 @@ Week 3 upgrade candidate if time-to-first-audio becomes a pain point.
 """
 
 import asyncio
+import re
 from time import perf_counter
 
 import numpy as np
@@ -18,6 +19,29 @@ from loguru import logger
 from pydantic import BaseModel
 
 from backend.config.settings import Settings
+
+
+def _clean_for_tts(text: str) -> str:
+    """Strip markdown formatting that Piper would speak as literal characters.
+
+    Order matters: handle bold+italic (***) before bold (**) before italic (*),
+    then clean up anything the regex didn't catch as matched pairs.
+    """
+    # Matched pairs: ***bold+italic***, **bold**, *italic*
+    text = re.sub(r'\*{1,3}(.+?)\*{1,3}', r'\1', text)
+    # Inline code: `code`
+    text = re.sub(r'`+([^`]*)`+', r'\1', text)
+    # ATX headers: # ## ###
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Bullet list markers at line start (- item / * item)
+    text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
+    # Numbered list markers (1. 2.)
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    # Any remaining stray asterisks (unmatched)
+    text = re.sub(r'\*', '', text)
+    # Collapse excess whitespace introduced by stripping
+    text = re.sub(r'  +', ' ', text)
+    return text.strip()
 
 
 class SynthesisResult(BaseModel):
@@ -158,6 +182,7 @@ class TTSService:
             TTSError: on subprocess failure, timeout, empty output, or missing binary.
                       Message is safe to display directly in the UI.
         """
+        text = _clean_for_tts(text)
         # Short log preview — never log the full text (can be long; hurts grep).
         preview = text[:60] + ("…" if len(text) > 60 else "")
         bound = logger.bind(req_id=f"tts-{len(text)}ch")
