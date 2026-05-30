@@ -3,11 +3,18 @@ import { MessageSquare } from "lucide-react";
 import { HudFrame } from "./HudFrame";
 
 export type ChatMessage = { role: "user" | "assistant"; text: string };
+export type SearchSource = { title: string; url: string };
 
 // Display cap — full history lives in App.tsx state; only the tail is rendered.
 const DISPLAY_LIMIT = 5;
 
-export function ChatPanel({ messages }: { messages: ChatMessage[] }) {
+export function ChatPanel({
+  messages,
+  sources = [],
+}: {
+  messages: ChatMessage[];
+  sources?: SearchSource[];
+}) {
   if (messages.length === 0) return null;
 
   const visible = messages.slice(-DISPLAY_LIMIT);
@@ -54,6 +61,34 @@ export function ChatPanel({ messages }: { messages: ChatMessage[] }) {
           </li>
         ))}
       </ul>
+
+      {/* Sources block — only shown after a web_search or grounded_search tool call.
+          URLs are never spoken aloud; they come here via the search_results WS event. */}
+      {sources.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-cyan-900/40">
+          <div
+            className="font-mono uppercase mb-1"
+            style={{ fontSize: 9, letterSpacing: "0.18em", color: "rgba(124,212,232,0.45)" }}
+          >
+            Sources
+          </div>
+          <ul className="flex flex-col gap-0.5">
+            {sources.map((s) => (
+              <li key={s.url} className="font-mono truncate" style={{ fontSize: 9 }}>
+                <a
+                  href={s.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "rgba(124,212,232,0.7)" }}
+                  className="hover:underline"
+                >
+                  {s.title || s.url}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </HudFrame>
   );
 }

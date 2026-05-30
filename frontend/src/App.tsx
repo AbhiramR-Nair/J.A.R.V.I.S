@@ -25,6 +25,9 @@ function App() {
   const { events, dispatch, amplitudeRef, connectionState, send } = useVoiceEvents();
   // True for ~30s after a PDF is dragged onto the window; cleared on voice summarize or timeout.
   const [pdfPending, setPdfPending] = useState(false);
+  // Latest search source links from web_search / grounded_search tool calls.
+  // Replaced on each new search; cleared when the user starts a new voice turn.
+  const [searchSources, setSearchSources] = useState<{ title: string; url: string }[]>([]);
 
   // Process the head of the event queue. Dispatches event_consumed at the end so
   // the next event becomes events[0] and triggers another run of this effect.
@@ -39,6 +42,8 @@ function App() {
     } else if (event.type === "transcription_complete") {
       console.log(`transcript: "${event.text}" (${event.latency_ms.toFixed(0)}ms)`);
       setMessages((prev) => [...prev, { role: "user", text: event.text }]);
+      // Clear previous search sources when a new user turn begins.
+      setSearchSources([]);
     } else if (event.type === "transcription_failed") {
       setErrorToast(event.error);
     } else if (event.type === "state_changed") {
@@ -60,6 +65,9 @@ function App() {
     } else if (event.type === "pdf_pending") {
       // Backend confirmed the dropped PDF path is stored and ready.
       setPdfPending(true);
+    } else if (event.type === "search_results") {
+      // Replace the sources list; latest search wins.
+      setSearchSources(event.sources);
     }
 
     dispatch({ type: "event_consumed" });
@@ -150,7 +158,7 @@ function App() {
           )}
         </AnimatePresence>
 
-        <ChatPanel messages={messages} />
+        <ChatPanel messages={messages} sources={searchSources} />
 
         {pdfPending && (
           <div className="bg-cyan-900/60 backdrop-blur-sm rounded-lg px-4 py-2 text-cyan-200 font-mono text-xs max-w-sm text-center">

@@ -48,6 +48,8 @@ export type VoiceEvent =
   | { type: "project_changed"; name: string }
   // Day 24 — PDF drag-and-drop: backend confirms the pending path was stored.
   | { type: "pdf_pending"; path: string }
+  // Day 25 — web/grounded search: tool broadcasts source links for the chat panel.
+  | { type: "search_results"; sources: { title: string; url: string }[] }
   // Day 16 — amplitude is intentionally NOT queued; see onmessage handler below.
   // High-frequency (~20Hz), latest value wins, missing one is invisible.
   | { type: "amplitude"; value: number; source: "mic" | "tts" };
