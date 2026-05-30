@@ -130,3 +130,44 @@ class GeminiProvider(BaseProvider):
             completion_tokens=completion_tokens,
             raw=response,
         )
+
+    async def grounded_search(self, query: str) -> dict:
+        """Run a Google-Search-grounded Gemini generation. Returns text + source URLs.
+
+        Grounding uses a built-in Gemini tool (google_search) that cannot coexist
+        reliably with our function-calling tools in the same request. This is therefore
+        an isolated call — no function tools attached — using the grounding_model setting.
+        """
+        settings = get_settings()
+        try:
+            response = await self._client.aio.models.generate_content(
+                model=settings.grounding_model,
+                contents=query,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                ),
+            )
+        except genai_errors.APIError as e:
+            code = e.code
+            if code == 429:
+                raise LLMRateLimitError(str(e)) from e
+            if code in (401, 403):
+                raise LLMAuthError(str(e)) from e
+            if code and 500 <= code < 600:
+                raise LLMUnavailableError(str(e)) from e
+            raise LLMError(str(e)) from e
+        except Exception as e:
+            raise LLMUnavailableError(str(e)) from e
+
+        # Extract source URLs from grounding_metadata. The attribute path is confirmed
+        # against google-genai==2.6.0: grounding_chunks[i].web.{title, uri}.
+        sources: list[dict] = []
+        try:
+            gm = response.candidates[0].grounding_metadata
+            for chunk in (gm.grounding_chunks or []):
+                if getattr(chunk, "web", None):
+                    sources.append({"title": chunk.web.title, "url": chunk.web.uri})
+        except (AttributeError, IndexError):
+            pass  # no grounding metadata — a text-only answer is still valid
+
+        return {"text": response.text, "sources": sources}

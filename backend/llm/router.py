@@ -109,3 +109,14 @@ def get_router() -> LLMRouter:
     if _router is None:
         _router = LLMRouter(primary=GeminiProvider(), fallback=GroqLLMProvider())
     return _router
+
+
+def get_gemini_provider() -> GeminiProvider:
+    """Return the Gemini provider from the singleton router.
+
+    Used by tools that need Gemini-specific features (e.g. grounded_search)
+    that the generic router.generate() interface does not expose.
+    Reaching the provider through here keeps tools from instantiating their
+    own raw genai.Client — one client per process, always.
+    """
+    return get_router().primary  # type: ignore[return-value]
