@@ -118,8 +118,18 @@ class Settings(BaseSettings):
     summarizer_direct_threshold: int = 12000
     summarizer_chunk_max_concurrent: int = 3
     summarizer_chunk_summary_target: int = 400
-    summarizer_model: str = "gemini-flash-lite-latest"  # Day 24: 2.5-flash is 503 today; restore when quota resets
+    summarizer_model: str = "gemini-2.5-flash"  # restored after Day 24 quota reset
     summarizer_chunk_model: str = "gemini-flash-lite-latest"  # map stage (plain text, high RPM)
+
+    # Web search (Day 25)
+    # tavily_search_depth: "advanced" gives better research results; "basic" is faster/cheaper.
+    # tavily_include_answer: Tavily pre-synthesises an answer, reducing LLM token load.
+    # web_search_content_cap: max chars of each result's content passed to the LLM.
+    # grounding_model: Gemini model for Google-Search-grounded calls (T-3, if built).
+    tavily_search_depth: str = "advanced"
+    tavily_include_answer: bool = True
+    web_search_content_cap: int = 800
+    grounding_model: str = "gemini-flash-lite-latest"
 
     # Misc
     app_version: str = "0.1.0"
