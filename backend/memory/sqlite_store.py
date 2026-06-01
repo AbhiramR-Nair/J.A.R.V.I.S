@@ -46,8 +46,9 @@ def get_active_project() -> dict:
 def set_active_project(name: str) -> dict:
     """Set the named project as active, creating it if it doesn't exist.
 
-    Name is normalized to lowercase so STT variants like 'Kinase'/'kinase'
-    resolve to the same project rather than creating duplicates.
+    Name is normalized to lowercase, and the common STT suffix " project"
+    is stripped so "switch to kinase project" and "switch to kinase" both
+    resolve to the same "kinase" project, not two separate ones.
 
     Uses a transaction so the DB is never left with zero active projects:
     step 1 deactivates all, step 2 activates the target. A crash between
@@ -55,6 +56,9 @@ def set_active_project(name: str) -> dict:
     Returns the now-active project as a dict.
     """
     name = name.strip().lower()
+    # Strip trailing " project" — STT commonly appends it ("general project" → "general").
+    if name.endswith(" project"):
+        name = name[: -len(" project")].strip()
     conn = get_db()
 
     # 'with conn:' is Python's sqlite3 context manager: commits on clean exit,
