@@ -42,11 +42,50 @@ All probes can be done via PTT or `POST /chat`. Check all boxes before committin
 
 ## 6. Tool-calling — Week 4 (Days 20–26)
 
-- [ ] "What are the latest papers on ABL1 inhibitors?" → web search fires → sources block renders in UI → spoken answer
-- [ ] "Open VS Code" → VS Code launches → spoken "Opening Visual Studio Code, sir." (#7)
-- [ ] "Set a timer for 1 minute" → spoken confirmation → toast fires after 60 s → spoken completion when loop is idle (#8)
+### 6.1 Project memory tools
+
+- [ ] "Switch to the kinase project." → set_active_project fires → project badge in status bar flips to "kinase" within 1 s (watch for `project_changed` WS event in log)
+- [ ] "Log this: T315I shows 40-fold shift in TKI binding" → log_to_project fires (confirm `tool_call: log_to_project` in log) → spoken confirmation ("Logged to project 'kinase', sir") → `SELECT COUNT(*) FROM memory WHERE project_id = <kinase_id>` grows by 1
+- [ ] "What did we just log?" → recall_from_project fires → spoken answer includes T315I note
+
+### 6.2 PDF summarization
+
+- [ ] Drag a text-based PDF onto the window → say "summarize this" → summarize_paper fires → structured spoken summary (key claims, methods, results). *Target ~15 s; under Gemini API load may be longer — latency alone is not a fail.*
+- [ ] (optional) "Summarize arxiv 2301.07041" → fetch_arxiv fires then summarize_paper → spoken summary
+
+### 6.3 Web search
+
+- [ ] "What are the latest papers on ABL1 inhibitors?" → web_search (Tavily) fires → sources block renders in UI → spoken answer
+
+### 6.4 App launcher
+
+- [ ] "Open VS Code" → VS Code launches → spoken "Opening Visual Studio Code, sir."
 - [ ] Unknown app (e.g. "Open Photoshop") → soft-error spoken response, no crash
+
+### 6.5 Timers
+
+- [ ] "Set a timer for 1 minute" → spoken confirmation → toast fires after 60 s → spoken completion when loop is idle
 - [ ] Two overlapping timers → both toasts fire, both spoken completions heard
+
+---
+
+## 7. Cross-project isolation (hard invariant — run every pass)
+
+After logging the T315I note to the kinase project (§6.1):
+
+- [ ] "Switch to the general project." → set_active_project fires → badge flips to "general"
+- [ ] "What did we conclude about T315I?" → recall_from_project fires → spoken reply must NOT surface the kinase log (expect "I don't have any notes on that" or similar)
+- [ ] Switch back: "Switch to the kinase project." → "What did we conclude about T315I?" → kinase log surfaces correctly
+
+This verifies that `project_id` scoping in `vector_store.search()` is enforced end-to-end.
+
+---
+
+## Known limitations (as of Day 27–28)
+
+- **grounded_search — 429 RESOURCE_EXHAUSTED** (confirmed Day 28): Quota blocked since Day 25 (shared Google Search grounding free-tier bucket). Soft-error path confirmed: grounded_search fires, returns error dict, LLM answers from its own knowledge — no crash, no unhappy path. Gemini may also route current-fact queries to web_search (Tavily) instead. Not a regression.
+- **Gemini API latency**: Under API load, embedding + generation calls stack to 23–27 s/turn (vs. <4 s target). This is an external API performance issue, not a code bug. Scoped timeout fix designed (Day 27 Decision D-4) and deferred to v2 to avoid tool-calling regressions. If still >20 s during this pass, note it in run results — do not panic-fix on a freeze day.
+- **SQLite memory table gap**: Fixed Day 28. `_persist_turn` now calls `sqlite_store.save_memory()` after `vector_store.add()` for turns scoring ≥ threshold — voice-loop turns are now SQL-queryable. The `memory` table grows from both explicit tool calls (`log_to_project`, `summarize_paper`) and auto-scored voice turns (score ≥ 4.0).
 
 ---
 
