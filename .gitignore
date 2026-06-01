@@ -25,6 +25,14 @@ frontend/.vite/
 # Claude Code — local settings are machine-specific, skill files are committed
 .claude/settings.local.json
 
+# Build docs (dev-only: daily plans, status logs, journal, demo checklist)
+docs/plans/
+docs/project_status/
+docs/Day_by_Day_Plan_v2.md
+docs/Version_1_plan.md
+docs/demo_script.md
+docs/journal.md
+
 # OS / editor
 .DS_Store
 Thumbs.db

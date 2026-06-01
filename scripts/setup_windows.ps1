@@ -21,17 +21,30 @@ Write-Host ""
 Write-Host "Checking prerequisites..." -ForegroundColor Yellow
 
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    Write-Host "[error] Python not found. Install from https://python.org and rerun." -ForegroundColor Red
+    Write-Host "[error] Python not found. Install 3.12+ from https://python.org and rerun." -ForegroundColor Red
     exit 1
 }
-$pyVersion = python --version
-Write-Host "  [ok] $pyVersion"
+$pyVersionStr = (python --version 2>&1).ToString()
+if ($pyVersionStr -match "Python (\d+)\.(\d+)") {
+    $pyMajor = [int]$Matches[1]; $pyMinor = [int]$Matches[2]
+    if ($pyMajor -lt 3 -or ($pyMajor -eq 3 -and $pyMinor -lt 12)) {
+        Write-Host "[error] Python 3.12+ required. Found: $pyVersionStr" -ForegroundColor Red
+        exit 1
+    }
+}
+Write-Host "  [ok] $pyVersionStr"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Write-Host "[error] Node.js not found. Install LTS from https://nodejs.org and rerun." -ForegroundColor Red
+    Write-Host "[error] Node.js not found. Install LTS (20+) from https://nodejs.org and rerun." -ForegroundColor Red
     exit 1
 }
 $nodeVersion = node --version
+if ($nodeVersion -match "v(\d+)") {
+    if ([int]$Matches[1] -lt 20) {
+        Write-Host "[error] Node 20+ required. Found: $nodeVersion" -ForegroundColor Red
+        exit 1
+    }
+}
 Write-Host "  [ok] Node $nodeVersion"
 
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
@@ -115,8 +128,18 @@ Write-Host ""
 Write-Host "=== Setup complete ===" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next steps:"
-Write-Host "  1. Fill in API keys in .env  (GEMINI_API_KEY, GROQ_API_KEY are required)"
-Write-Host "  2. Start the backend:   .venv\Scripts\python -m uvicorn backend.main:app --reload"
-Write-Host "  3. Start the frontend:  cd frontend; npm run dev"
-Write-Host "  4. Hold Alt+Space to talk."
+Write-Host "  1. Fill in API keys in .env  (GEMINI_API_KEY and GROQ_API_KEY are required)"
+Write-Host ""
+Write-Host "  2. Open TWO terminals from the repo root:"
+Write-Host ""
+Write-Host "     Terminal 1 (Vite dev server):"
+Write-Host "       cd frontend"
+Write-Host "       npm run dev"
+Write-Host ""
+Write-Host "     Terminal 2 (PyWebView shell + FastAPI backend):"
+Write-Host "       .\.venv\Scripts\Activate.ps1"
+Write-Host "       python -m backend.desktop"
+Write-Host ""
+Write-Host "  3. Hold Alt+Space and speak. Release to send."
+Write-Host "     Ctrl+Alt+J to mute/unmute."
 Write-Host ""
