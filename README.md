@@ -2,7 +2,7 @@
 
 > Voice-first, project-aware AI research assistant that runs as a floating Windows overlay.
 
-<!-- demo: added Day 30 -->
+> **Demo video coming soon** — PDF summarizer quota reset pending. Will be linked here.
 
 A daily-driver AI companion built for computational biology and research workflows. Ask questions, summarize papers, search the web, log project notes, launch apps, and set timers — all by voice. Runs as a transparent, always-on-top window on your desktop, powered by cloud APIs so it stays fast on low-spec hardware.
 
