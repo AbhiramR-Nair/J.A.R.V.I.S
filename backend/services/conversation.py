@@ -659,6 +659,14 @@ class ConversationOrchestrator:
                     metadata={"importance": score, "provider": provider},
                 )
                 logger.debug(f"orchestrator: stored in ChromaDB (id={chroma_id}, score={score})")
+                # Mirror to SQLite memory table so voice-loop turns are SQL-queryable.
+                # chroma_id is passed so the two stores stay linked; save_memory is sync + fast.
+                sqlite_store.save_memory(
+                    text=combined,
+                    project_id=project_id,
+                    importance=score,
+                    chroma_id=chroma_id,
+                )
         except Exception as exc:
             # Non-fatal: memory storage failure must never break the voice loop.
             logger.warning(f"orchestrator: memory storage failed (non-fatal): {exc}")
