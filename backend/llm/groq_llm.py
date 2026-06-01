@@ -64,6 +64,12 @@ class GroqLLMProvider(BaseProvider):
 
         # Multi-turn contents list arrives here only when Gemini fails mid-tool-loop
         # and the router falls back. Groq can't replay tool calls, so flatten to text.
+        # IMPORTANT: must handle all three Part types or tool results are silently lost:
+        #   - text           → conversation text (user queries, partial responses)
+        #   - function_call  → which tool Gemini called + args (context only)
+        #   - function_response → the actual tool result (e.g. full PDF summary dict)
+        # Dropping function_response caused Groq to ignore the summary and respond with
+        # "I'd be happy to attempt a summary, but I need to know which paper…" (Day 28).
         if isinstance(prompt, list):
             segments = []
             for item in prompt:
@@ -71,6 +77,12 @@ class GroqLLMProvider(BaseProvider):
                     for p in item.parts:
                         if hasattr(p, "text") and p.text:
                             segments.append(p.text)
+                        elif hasattr(p, "function_call") and p.function_call:
+                            fc = p.function_call
+                            segments.append(f"[tool called: {fc.name}({dict(fc.args)})]")
+                        elif hasattr(p, "function_response") and p.function_response:
+                            fr = p.function_response
+                            segments.append(f"[tool result from {fr.name}]: {fr.response}")
             prompt = "\n".join(segments) if segments else "[no readable prompt]"
 
         messages: list[dict] = []
