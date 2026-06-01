@@ -40,6 +40,14 @@ All probes can be done via PTT or `POST /chat`. Check all boxes before committin
 - [ ] After a factual exchange, ask "What did we just discuss?" → references prior context
 - [ ] `SELECT COUNT(*) FROM memory ORDER BY id DESC LIMIT 5;` shows recent entries in jarvis.db
 
+## 6. Tool-calling — Week 4 (Days 20–26)
+
+- [ ] "What are the latest papers on ABL1 inhibitors?" → web search fires → sources block renders in UI → spoken answer
+- [ ] "Open VS Code" → VS Code launches → spoken "Opening Visual Studio Code, sir." (#7)
+- [ ] "Set a timer for 1 minute" → spoken confirmation → toast fires after 60 s → spoken completion when loop is idle (#8)
+- [ ] Unknown app (e.g. "Open Photoshop") → soft-error spoken response, no crash
+- [ ] Two overlapping timers → both toasts fire, both spoken completions heard
+
 ---
 
 ## End-of-week milestones

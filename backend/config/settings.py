@@ -54,6 +54,9 @@ class Settings(BaseSettings):
 
     # Memory importance threshold: exchanges scoring below this are not stored
     importance_threshold: float = 4.0
+    # Set USE_LLM_IMPORTANCE_SCORER=true in .env to restore the LLM path for A/B testing.
+    # Default False: heuristic scorer runs instead, saving one LLM call per turn.
+    use_llm_importance_scorer: bool = False
 
     # Audio capture (Day 8)
     # These values are locked to what Groq Whisper and openWakeWord both require.

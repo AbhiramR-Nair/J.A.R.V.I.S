@@ -291,6 +291,25 @@ class TTSService:
             await loop.run_in_executor(None, stream.abort)
         self._latest_amplitude = 0.0
 
+    async def warm_up(self) -> None:
+        """Prime the OS page-cache for the Piper binary and voice model.
+
+        Synthesizes a short string so the first real TTS call doesn't pay the
+        Windows cold-start cost (DLL init, Defender scan, .onnx load). Playback
+        is intentionally skipped — startup must be silent. Failure is non-fatal:
+        a warning is logged and boot continues normally.
+        """
+        start = perf_counter()
+        try:
+            await self.synthesize("ok")
+            elapsed_ms = (perf_counter() - start) * 1000
+            logger.info("tts warm-up complete in {:.0f}ms", elapsed_ms)
+        except Exception as exc:
+            elapsed_ms = (perf_counter() - start) * 1000
+            logger.warning(
+                "tts warm-up failed after {:.0f}ms (boot continues): {}", elapsed_ms, exc
+            )
+
     async def close(self) -> None:
         """No-op today — Piper has no persistent process to clean up.
 

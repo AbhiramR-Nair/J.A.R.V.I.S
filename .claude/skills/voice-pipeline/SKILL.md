@@ -406,6 +406,9 @@ into the orchestrator, smoke tests, and (Day 12) audio robustness work.
 
 - `speak(text: str) -> SynthesisResult` — async; runs Piper as a subprocess, plays
   through sounddevice via `run_in_executor`. Awaits playback completion.
+- `warm_up()` — async; synthesizes a short string at startup to prime the OS
+  page-cache for the Piper binary and voice model. No audio plays. Failure is
+  non-fatal. Called once in lifespan after TTSService is constructed.
 - `cancel_playback()` — async; calls `sd.stop()` inside an executor. Added in Day 11
   for mute-during-speaking.
 - `close()` — release any persistent state on shutdown.

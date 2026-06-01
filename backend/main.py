@@ -132,6 +132,8 @@ async def lifespan(app: FastAPI):
 
     # Build TTSService after STTService so shutdown closes in reverse order: tts → stt → recorder.
     app.state.tts_service = TTSService(s)
+    # Pay Piper's cold-start cost once at boot so the first real query isn't slow.
+    await app.state.tts_service.warm_up()
 
     # Build the ConversationOrchestrator last; it depends on all three services above.
     # broadcast is ws_manager.broadcast so the orchestrator can push events to the React app.
