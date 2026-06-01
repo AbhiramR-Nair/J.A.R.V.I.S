@@ -146,10 +146,22 @@ async def search(
     k = min(k, count)
     embedding = await _embed(query, task_type="RETRIEVAL_QUERY")
 
-    results = collection.query(
-        query_embeddings=[embedding],
-        n_results=k,
-    )
+    try:
+        results = collection.query(
+            query_embeddings=[embedding],
+            n_results=k,
+        )
+    except Exception as exc:
+        # ChromaDB's Rust backend raises InternalError ("Nothing found on disk")
+        # when count() > 0 but the HNSW index was never persisted — e.g. documents
+        # were counted in metadata but the index file was never written or was deleted.
+        # Return [] so the voice turn continues with recency context only, not an error state.
+        logger.warning(
+            f"vector_store.search: query failed for project_{project_id} "
+            f"(HNSW index missing?), returning empty: {exc}"
+        )
+        return []
+
     # results["documents"] is a list-of-lists (one inner list per query sent).
     # We always send exactly one query, so we take index [0].
     docs: list[str] = results["documents"][0] if results["documents"] else []
