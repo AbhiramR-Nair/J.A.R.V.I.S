@@ -33,7 +33,8 @@ from backend.tools import registry
 )
 async def set_active_project(name: str) -> str:
     """Switch to the named project (create if missing). Returns a confirmation string."""
-    # sqlite_store handles INSERT OR IGNORE + deactivate-all + activate-target atomically.
-    # Any DB failure propagates as an exception and the registry returns a soft error.
-    sqlite_store.set_active_project(name)
-    return f"Switched to project '{name}'."
+    # sqlite_store handles INSERT OR IGNORE + deactivate-all + activate-target atomically,
+    # and normalizes the name (strips " project" suffix, lowercases). Use the returned
+    # project dict so the confirmation string reflects the actual normalized name in the DB.
+    project = sqlite_store.set_active_project(name)
+    return f"Switched to project '{project['name']}'."
